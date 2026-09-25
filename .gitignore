@@ -1,0 +1,12 @@
+.env
+hrishu.db
+*.log
+__pycache__/
+venv/
+*.backup
+*.before-*
+*.broken_current
+bot.py.*
+bot_backup.py
+bot_before_*.py
+database_*.py
