@@ -3504,8 +3504,273 @@ async def admin_broadcast_message(update, context):
 
 
 
+
+# ============================================================
+# POWER SYSTEM
+# ============================================================
+
+POWER_CONFIG = {
+    "hp": {
+        "name": "❤️ Health",
+        "max_multiplier": 7.0,
+        "increase_per_upgrade": 0.15,
+    },
+    "attack": {
+        "name": "⚡ Attack Power",
+        "max_multiplier": 4.5,
+        "increase_per_upgrade": None,
+    },
+    "shield": {
+        "name": "🛡️ Shield Protection",
+        "max_multiplier": 2.0,
+        "increase_per_upgrade": None,
+    },
+    "defense": {
+        "name": "🧱 Defense",
+        "max_multiplier": 2.0,
+        "increase_per_upgrade": None,
+    },
+}
+
+
+def power_progress_bar(upgrades):
+    total = 10
+    filled = upgrades % total
+    if upgrades > 0 and upgrades % total == 0:
+        filled = total
+
+    return "🟩" * filled + "⬜" * (total - filled)
+
+
+def power_multiplier(level, upgrades, maximum):
+    total_upgrades = ((level - 1) * 10) + upgrades
+
+    if maximum == 7.0:
+        multiplier = 1.0 + (total_upgrades * 0.10)
+        return min(multiplier, maximum)
+
+    if maximum == 4.5:
+        multiplier = 1.0 + (total_upgrades * (3.5 / 60))
+        return min(multiplier, maximum)
+
+    multiplier = 1.0 + (total_upgrades * (1.0 / 60))
+    return min(multiplier, maximum)
+
+
+def power_upgrade_cost(level, upgrades):
+    # Starts at 400 coins + 100 XP.
+    # Gets harder as the player progresses.
+    progress = ((level - 1) * 10) + upgrades
+
+    coins = 400 + (progress * 100)
+    xp = 100 + (progress * 25)
+
+    return coins, xp
+
+
+def power_stats_text(user):
+    lines = [
+        "⚡ <b>HRISHU POWER</b>",
+        "",
+    ]
+
+    stats = [
+        ("❤️", "Health", user["power_hp_level"], user["power_hp_upgrades"], 7.0),
+        ("⚡", "Attack Power", user["power_attack_level"], user["power_attack_upgrades"], 4.5),
+        ("🛡️", "Shield", user["power_shield_level"], user["power_shield_upgrades"], 2.0),
+        ("🧱", "Defense", user["power_durability_level"], user["power_durability_upgrades"], 2.0),
+    ]
+
+    for icon, name, level, upgrades, maximum in stats:
+        multiplier = power_multiplier(level, upgrades, maximum)
+
+        if level >= 7:
+            progress = "🟩" * 10
+            status = "MAX LEVEL"
+        else:
+            progress = power_progress_bar(upgrades)
+            status = f"{upgrades}/10 upgrades"
+
+        lines.append(
+            f"{icon} <b>{name}</b>\n"
+            f"   Level: <b>{level}/7</b> • ×{multiplier:.2f}\n"
+            f"   {progress}  {status}\n"
+        )
+
+    lines.append("👇 Choose a power to upgrade.")
+
+    return "\n".join(lines)
+
+
+async def power_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = await ensure_user(update)
+
+    keyboard = [
+        [
+            InlineKeyboardButton("❤️ Health +", callback_data="power_hp"),
+            InlineKeyboardButton("⚡ Attack +", callback_data="power_attack"),
+        ],
+        [
+            InlineKeyboardButton("🛡️ Shield +", callback_data="power_shield"),
+            InlineKeyboardButton("🧱 Defense +", callback_data="power_defense"),
+        ],
+    ]
+
+    await update.message.reply_text(
+        power_stats_text(user),
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+
+    # ========================================================
+    # POWER SYSTEM
+    # ========================================================
+
+    if query.data.startswith("power_"):
+        power_type = query.data.replace("power_", "", 1)
+
+        if power_type not in POWER_CONFIG:
+            await query.answer("❌ Invalid power.", show_alert=True)
+            return
+
+        user = await ensure_user(update)
+
+        field_map = {
+            "hp": ("power_hp_level", "power_hp_upgrades"),
+            "attack": ("power_attack_level", "power_attack_upgrades"),
+            "shield": ("power_shield_level", "power_shield_upgrades"),
+            "defense": ("power_durability_level", "power_durability_upgrades"),
+        }
+
+        level_field, upgrade_field = field_map[power_type]
+
+        level = int(user[level_field] or 1)
+        upgrades = int(user[upgrade_field] or 0)
+
+        if level >= 7:
+            await query.answer(
+                "🏆 This power is already MAX LEVEL!",
+                show_alert=True,
+            )
+            return
+
+        coins_needed, xp_needed = power_upgrade_cost(
+            level,
+            upgrades,
+        )
+
+        if user["coins"] < coins_needed:
+            await query.answer(
+                f"💰 You need {coins_needed} coins.",
+                show_alert=True,
+            )
+            return
+
+        if user["xp"] < xp_needed:
+            await query.answer(
+                f"⭐ You need {xp_needed} XP.",
+                show_alert=True,
+            )
+            return
+
+        # Pay upgrade cost.
+        update_user(
+            user["user_id"],
+            coins=user["coins"] - coins_needed,
+            xp=user["xp"] - xp_needed,
+        )
+
+        upgrades += 1
+
+        # Every 10 upgrades = next level.
+        if upgrades >= 10:
+            upgrades = 0
+            level += 1
+
+        update_fields = {
+            upgrade_field: upgrades,
+            level_field: level,
+        }
+
+        # Health directly increases the player's max HP.
+        if power_type == "hp":
+            multiplier = power_multiplier(
+                level,
+                upgrades,
+                POWER_CONFIG["hp"]["max_multiplier"],
+            )
+
+            new_max_hp = max(
+                100,
+                int(round(100 * multiplier)),
+            )
+
+            update_fields["max_hp"] = new_max_hp
+
+            # Keep current HP from exceeding the new maximum.
+            update_fields["hp"] = min(
+                int(user["hp"]),
+                new_max_hp,
+            )
+
+        update_user(
+            user["user_id"],
+            **update_fields,
+        )
+
+        fresh_user = get_user(user["user_id"])
+
+        if level >= 7:
+            progress = "🟩" * 10
+            level_text = "🏆 MAX LEVEL"
+        else:
+            progress = power_progress_bar(upgrades)
+            level_text = f"Level {level}/7"
+
+        multiplier = power_multiplier(
+            level,
+            upgrades,
+            POWER_CONFIG[power_type]["max_multiplier"],
+        )
+
+        await query.answer(
+            f"✅ {POWER_CONFIG[power_type]['name']} upgraded!",
+            show_alert=False,
+        )
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "❤️ Health +",
+                    callback_data="power_hp",
+                ),
+                InlineKeyboardButton(
+                    "⚡ Attack +",
+                    callback_data="power_attack",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    "🛡️ Shield +",
+                    callback_data="power_shield",
+                ),
+                InlineKeyboardButton(
+                    "🧱 Defense +",
+                    callback_data="power_defense",
+                ),
+            ],
+        ]
+
+        await query.edit_message_text(
+            power_stats_text(fresh_user),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return
 
     # ========================================================
     # ADMIN TOOLS
@@ -7837,6 +8102,9 @@ def main():
     )
     application.add_handler(
         CommandHandler("attack", attack)
+    )
+    application.add_handler(
+        CommandHandler("power", power_command)
     )
     application.add_handler(CommandHandler("use", use_item))
     application.add_handler(CommandHandler("potion", potion))

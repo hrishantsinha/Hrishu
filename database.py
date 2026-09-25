@@ -111,6 +111,24 @@ def init_db():
         "sword_durability": "INTEGER DEFAULT 0",
         "shield_durability": "INTEGER DEFAULT 0",
 
+        # =========================
+        # POWER SYSTEM
+        # =========================
+        "power_hp_level": "INTEGER DEFAULT 1",
+        "power_hp_upgrades": "INTEGER DEFAULT 0",
+
+        "power_attack_level": "INTEGER DEFAULT 1",
+        "power_attack_upgrades": "INTEGER DEFAULT 0",
+
+        "power_sword_level": "INTEGER DEFAULT 1",
+        "power_sword_upgrades": "INTEGER DEFAULT 0",
+
+        "power_durability_level": "INTEGER DEFAULT 1",
+        "power_durability_upgrades": "INTEGER DEFAULT 0",
+
+        "power_shield_level": "INTEGER DEFAULT 1",
+        "power_shield_upgrades": "INTEGER DEFAULT 0",
+
         "staff_role": "TEXT DEFAULT 'user'"
     }
 
