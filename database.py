@@ -169,6 +169,49 @@ def init_db():
 
 
 # =========================
+# GLOBAL FIGHT SYSTEM
+# =========================
+
+def init_global_fight_db():
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS global_fight_chats (
+            chat_id INTEGER PRIMARY KEY,
+            chat_type TEXT NOT NULL,
+            last_seen INTEGER DEFAULT 0
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS global_fight_users (
+            user_id INTEGER PRIMARY KEY,
+            last_global_fight INTEGER DEFAULT 0
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS global_fight_private_users (
+            user_id INTEGER PRIMARY KEY,
+            last_seen INTEGER DEFAULT 0
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS global_fight_matchmaking (
+            user_id INTEGER PRIMARY KEY,
+            chat_id INTEGER NOT NULL,
+            chat_type TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+
+# =========================
 # USER MANAGEMENT
 # =========================
 
@@ -268,6 +311,18 @@ def update_user(user_id, **fields):
         "sword_upgrade",
         "swords_bought",
         "shields_bought",
+
+        # Power system
+        "power_hp_level",
+        "power_hp_upgrades",
+        "power_attack_level",
+        "power_attack_upgrades",
+        "power_sword_level",
+        "power_sword_upgrades",
+        "power_durability_level",
+        "power_durability_upgrades",
+        "power_shield_level",
+        "power_shield_upgrades",
 
         "staff_role"
     }

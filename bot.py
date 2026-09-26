@@ -22,6 +22,7 @@ from telegram.ext import (
 
 from database import (
     init_db,
+    init_global_fight_db,
     init_bank_db,
     create_user,
     get_user,
@@ -51,6 +52,33 @@ if not BOT_TOKEN:
 
 if not OWNER_ID:
     raise ValueError("OWNER_ID is missing in .env")
+
+
+def get_admin_ids():
+    """Return Telegram IDs of users whose staff role is admin."""
+    conn = sqlite3.connect("hrishu.db")
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT user_id FROM users WHERE staff_role = 'admin'"
+    )
+    ids = {row[0] for row in cur.fetchall()}
+    conn.close()
+    return ids
+
+
+class DynamicAdminIDs:
+    """Set-like object so existing ADMIN_IDS checks keep working."""
+    def __or__(self, other):
+        return get_admin_ids() | set(other)
+
+    def __ror__(self, other):
+        return set(other) | get_admin_ids()
+
+    def __contains__(self, item):
+        return item in get_admin_ids()
+
+
+ADMIN_IDS = DynamicAdminIDs()
 
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -1345,6 +1373,542 @@ BATTLE_ACCEPT_TIMEOUT = 60
 BATTLE_ATTACK_MIN = 15
 BATTLE_ATTACK_MAX = 35
 
+# ============================================================
+# GLOBAL FIGHT SYSTEM
+# ============================================================
+
+GLOBAL_FIGHT_COOLDOWN = 20
+GLOBAL_FIGHT_TIMEOUT = 300  # 5 minutes
+
+# Users currently looking for another global fighter.
+BOT_PLAYERS = [
+    {"user_id": -1001, "username": "kingxoxo", "first_name": "KING XoXo"},
+    {"user_id": -1002, "username": "shadowreaper", "first_name": "ShadowReaper"},
+    {"user_id": -1003, "username": "nomercyy", "first_name": "NoMercy"},
+    {"user_id": -1004, "username": "godofwar_x", "first_name": "GodOfWar"},
+    {"user_id": -1005, "username": "venomstrike", "first_name": "VenomStrike"},
+    {"user_id": -1006, "username": "deathdealerr", "first_name": "DeathDealer"},
+    {"user_id": -1007, "username": "silentassassin", "first_name": "SilentAssassin"},
+    {"user_id": -1008, "username": "phantomx_", "first_name": "PhantomX"},
+    {"user_id": -1009, "username": "berserkerlord", "first_name": "BerserkerLord"},
+    {"user_id": -1010, "username": "nightstalker99", "first_name": "NightStalker"},
+    {"user_id": -1011, "username": "ironfistx", "first_name": "IronFist"},
+    {"user_id": -1012, "username": "crimsonwolf_", "first_name": "CrimsonWolf"},
+    {"user_id": -1013, "username": "dragonslayerz", "first_name": "DragonSlayer"},
+    {"user_id": -1014, "username": "toxic_king", "first_name": "ToxicKing"},
+    {"user_id": -1015, "username": "savagehunter", "first_name": "SavageHunter"},
+    {"user_id": -1016, "username": "darkknight_x", "first_name": "DarkKnight"},
+    {"user_id": -1017, "username": "bloodmoon99", "first_name": "BloodMoon"},
+    {"user_id": -1018, "username": "reaperxking", "first_name": "ReaperKing"},
+    {"user_id": -1019, "username": "furyblade_", "first_name": "FuryBlade"},
+    {"user_id": -1020, "username": "vengeance_x", "first_name": "Vengeance"},
+    {"user_id": -1021, "username": "warlordzz", "first_name": "Warlord"},
+    {"user_id": -1022, "username": "grimreaperx", "first_name": "GrimReaper"},
+    {"user_id": -1023, "username": "chaoslordx", "first_name": "ChaosLord"},
+    {"user_id": -1024, "username": "titanslayer_", "first_name": "TitanSlayer"},
+    {"user_id": -1025, "username": "voidwalkerx", "first_name": "VoidWalker"},
+    {"user_id": -1026, "username": "steelfangx", "first_name": "SteelFang"},
+    {"user_id": -1027, "username": "ashenkingx", "first_name": "AshenKing"},
+    {"user_id": -1028, "username": "hellfirexx", "first_name": "HellFire"},
+    {"user_id": -1029, "username": "obliviongod", "first_name": "OblivionGod"},
+    {"user_id": -1030, "username": "wrathbringer", "first_name": "WrathBringer"},
+]
+BOT_IDS = {b["user_id"] for b in BOT_PLAYERS}
+
+
+def is_bot_player(user_id):
+    return user_id in BOT_IDS
+
+
+global_fight_queue = {}
+
+# Pending global challenges.
+global_fight_challenges = {}
+
+# Track chats that have interacted with Hrishu.
+global_fight_known_chats = set()
+
+
+def register_global_fight_chat(chat):
+    if not chat:
+        return
+
+    # Private chat = remember the user for future Premium
+    # Global Fight broadcasts.
+    if chat.type == "private":
+        register_global_fight_private_user(chat.id)
+        return
+
+    # Groups/supergroups are stored as broadcast destinations.
+    if chat.type not in ("group", "supergroup"):
+        return
+
+    global_fight_known_chats.add(chat.id)
+
+    conn = sqlite3.connect("hrishu.db")
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT OR REPLACE INTO global_fight_chats
+        (chat_id, chat_type, last_seen)
+        VALUES (?, ?, ?)
+        """,
+        (
+            chat.id,
+            chat.type,
+            int(time.time()),
+        ),
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def register_global_fight_user(user_id):
+    conn = sqlite3.connect("hrishu.db")
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT OR IGNORE INTO global_fight_users
+        (user_id, last_global_fight)
+        VALUES (?, 0)
+        """,
+        (user_id,),
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def register_global_fight_private_user(user_id):
+    conn = sqlite3.connect("hrishu.db")
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT OR REPLACE INTO global_fight_private_users
+        (user_id, last_seen)
+        VALUES (?, ?)
+        """,
+        (user_id, int(time.time())),
+    )
+
+    conn.commit()
+    conn.close()
+
+
+GLOBAL_FIGHT_SESSION_TTL = 300  # 5 minutes
+
+
+def get_global_fight_private_users():
+    cutoff = int(time.time()) - GLOBAL_FIGHT_SESSION_TTL
+
+    conn = sqlite3.connect("hrishu.db")
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    # Remove expired private-session records first.
+    cur.execute(
+        """
+        DELETE FROM global_fight_private_users
+        WHERE last_seen < ?
+        """,
+        (cutoff,),
+    )
+
+    cur.execute(
+        """
+        SELECT user_id
+        FROM global_fight_private_users
+        WHERE last_seen >= ?
+        """,
+        (cutoff,),
+    )
+
+    rows = cur.fetchall()
+
+    conn.commit()
+    conn.close()
+
+    return [row["user_id"] for row in rows]
+
+
+def global_fight_cooldown_remaining(user_id):
+    conn = sqlite3.connect("hrishu.db")
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT last_global_fight
+        FROM global_fight_users
+        WHERE user_id = ?
+        """,
+        (user_id,),
+    )
+
+    row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        return 0
+
+    remaining = GLOBAL_FIGHT_COOLDOWN - (
+        int(time.time()) - int(row["last_global_fight"] or 0)
+    )
+
+    return max(0, remaining)
+
+
+def set_global_fight_cooldown(user_id):
+    register_global_fight_user(user_id)
+
+    conn = sqlite3.connect("hrishu.db")
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        UPDATE global_fight_users
+        SET last_global_fight = ?
+        WHERE user_id = ?
+        """,
+        (int(time.time()), user_id),
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def cleanup_global_fight_queue():
+    now = int(time.time())
+
+    expired = []
+
+    for user_id, data in global_fight_queue.items():
+        if now - data["created_at"] > GLOBAL_FIGHT_TIMEOUT:
+            expired.append(user_id)
+
+    for user_id in expired:
+        global_fight_queue.pop(user_id, None)
+
+
+def find_global_fight_opponent(user_id):
+    cleanup_global_fight_queue()
+
+    for opponent_id, data in list(global_fight_queue.items()):
+        if opponent_id == user_id:
+            continue
+
+        # Don't match two entries belonging to the same user.
+        if data["user_id"] == user_id:
+            continue
+
+        return opponent_id, data
+
+    return None, None
+
+
+def init_global_fight_matchmaking_db():
+    conn = sqlite3.connect("hrishu.db")
+    cur = conn.cursor()
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS global_fight_matchmaking (
+            user_id INTEGER PRIMARY KEY,
+            chat_id INTEGER NOT NULL,
+            chat_type TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+
+def db_global_fight_add(user_id, chat_id, chat_type):
+    init_global_fight_matchmaking_db()
+
+    conn = sqlite3.connect("hrishu.db")
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT OR REPLACE INTO global_fight_matchmaking
+        (user_id, chat_id, chat_type, created_at)
+        VALUES (?, ?, ?, ?)
+    """, (
+        user_id,
+        chat_id,
+        chat_type,
+        int(time.time()),
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+def db_global_fight_remove(user_id):
+    init_global_fight_matchmaking_db()
+
+    conn = sqlite3.connect("hrishu.db")
+    cur = conn.cursor()
+
+    cur.execute(
+        "DELETE FROM global_fight_matchmaking WHERE user_id = ?",
+        (user_id,),
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def db_global_fight_find_opponent(user_id):
+    init_global_fight_matchmaking_db()
+
+    cutoff = int(time.time()) - GLOBAL_FIGHT_TIMEOUT
+
+    conn = sqlite3.connect("hrishu.db")
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    # Remove old searches.
+    cur.execute("""
+        DELETE FROM global_fight_matchmaking
+        WHERE created_at < ?
+    """, (cutoff,))
+
+    cur.execute("""
+        SELECT user_id, chat_id, chat_type, created_at
+        FROM global_fight_matchmaking
+        WHERE user_id != ?
+        ORDER BY created_at ASC
+        LIMIT 1
+    """, (user_id,))
+
+    row = cur.fetchone()
+
+    conn.commit()
+    conn.close()
+
+    if not row:
+        return None, None
+
+    return row["user_id"], dict(row)
+
+
+def db_global_fight_is_waiting(user_id):
+    init_global_fight_matchmaking_db()
+
+    conn = sqlite3.connect("hrishu.db")
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT 1 FROM global_fight_matchmaking WHERE user_id = ?",
+        (user_id,),
+    )
+
+    exists = cur.fetchone() is not None
+
+    conn.close()
+    return exists
+
+
+def new_global_fight_queue_entry(user, chat_id, chat_type):
+    return {
+        "user_id": user["user_id"],
+        "chat_id": chat_id,
+        "chat_type": chat_type,
+        "created_at": int(time.time()),
+    }
+
+
+def new_global_fight_challenge(user_id, opponent_id):
+    challenge_id = f"{user_id}_{opponent_id}_{int(time.time())}"
+
+    global_fight_challenges[challenge_id] = {
+        "id": challenge_id,
+        "p1": user_id,
+        "p2": opponent_id,
+        "created_at": int(time.time()),
+        "status": "pending",
+        "accepted": set(),
+    }
+
+    return global_fight_challenges[challenge_id]
+
+
+def remove_global_fight_challenge(challenge_id):
+    global_fight_challenges.pop(challenge_id, None)
+
+
+async def broadcast_global_fight_challenge(
+    context,
+    text,
+    reply_markup=None,
+    exclude_chat_id=None,
+):
+    # Only broadcast to chats/users seen during the last 5 minutes.
+    cutoff = int(time.time()) - GLOBAL_FIGHT_SESSION_TTL
+
+    conn = sqlite3.connect("hrishu.db")
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    # Remove expired group/session records.
+    cur.execute(
+        """
+        DELETE FROM global_fight_chats
+        WHERE last_seen < ?
+        """,
+        (cutoff,),
+    )
+
+    # Remove expired private-user/session records.
+    cur.execute(
+        """
+        DELETE FROM global_fight_private_users
+        WHERE last_seen < ?
+        """,
+        (cutoff,),
+    )
+
+    # Current active group/supergroup session destinations.
+    cur.execute(
+        """
+        SELECT chat_id
+        FROM global_fight_chats
+        WHERE last_seen >= ?
+        """,
+        (cutoff,),
+    )
+
+    group_ids = [row["chat_id"] for row in cur.fetchall()]
+
+    # Current active private-user session destinations.
+    cur.execute(
+        """
+        SELECT user_id
+        FROM global_fight_private_users
+        WHERE last_seen >= ?
+        """,
+        (cutoff,),
+    )
+
+    private_ids = [row["user_id"] for row in cur.fetchall()]
+
+    conn.commit()
+    conn.close()
+
+    # Combine groups + private DMs.
+    destinations = set(group_ids)
+    destinations.update(private_ids)
+
+    sent = 0
+
+    for chat_id in destinations:
+        # Never send the broadcast back to the chat where the
+        # challenged user actually responded.
+        if exclude_chat_id is not None and chat_id == exclude_chat_id:
+            continue
+
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+            )
+            sent += 1
+        except Exception:
+            # User may have blocked the bot or the bot may have
+            # been removed from a group.
+            continue
+
+    return sent
+
+
+def ensure_bot_user(bot_id):
+    bot_data = next((b for b in BOT_PLAYERS if b["user_id"] == bot_id), None)
+    if not bot_data:
+        return None
+
+    create_user(bot_id, bot_data["username"], bot_data["first_name"])
+    existing = get_user(bot_id)
+
+    update_user(
+        bot_id,
+        coins=5000,
+        hp=100,
+        max_hp=100,
+        sword_durability=0,
+        shield_durability=0,
+        xp=existing["xp"] if existing and existing["xp"] >= 2000 else random.randint(2000, 10000),
+    )
+    return get_user(bot_id)
+
+
+def get_random_bot_opponent():
+    bot_data = random.choice(BOT_PLAYERS)
+    return ensure_bot_user(bot_data["user_id"])
+
+
+async def bot_take_turn(context, battle):
+    await asyncio.sleep(random.randint(2, 4))
+
+    battle_id = battle["id"]
+    if battle_id not in battles:
+        return
+
+    battle = battles[battle_id]
+    if battle["status"] != "active":
+        return
+
+    bot_id = battle["turn"]
+    if not is_bot_player(bot_id):
+        return
+
+    opponent_id = battle_opponent(battle, bot_id)
+    bot_user = get_user(bot_id)
+    opponent = get_user(opponent_id)
+
+    if not bot_user or not opponent:
+        return
+
+    dmg = random.randint(BATTLE_ATTACK_MIN, BATTLE_ATTACK_MAX)
+    dmg = int(dmg * random.uniform(1.0, 1.3))
+
+    new_hp = max(0, opponent["hp"] - dmg)
+    update_user(opponent_id, hp=new_hp)
+    battle["turn"] = opponent_id
+
+    action_text = f"{mention(bot_user)} attacked {mention(opponent)} for {dmg} damage!"
+
+    if new_hp == 0:
+        action_text += f" {mention(opponent)} is down!"
+        try:
+            await context.bot.edit_message_text(
+                chat_id=battle["chat_id"],
+                message_id=battle["status_message_id"],
+                text=render_battle_hud(battle, action_text),
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+        await resolve_battle_end(context, battle["chat_id"], bot_id, opponent_id, battle)
+        return
+
+    try:
+        await context.bot.edit_message_text(
+            chat_id=battle["chat_id"],
+            message_id=battle["status_message_id"],
+            text=render_battle_hud(battle, action_text),
+            parse_mode="HTML",
+            reply_markup=battle_keyboard(),
+        )
+    except Exception:
+        pass
+
 
 def new_battle(chat_id, p1_id, p2_id):
     battle_id = next_battle_id[0]
@@ -1357,6 +1921,7 @@ def new_battle(chat_id, p1_id, p2_id):
         "p2": p2_id,
         "status": "pending",
         "created_at": int(time.time()),
+        "turn": p1_id,
     }
 
     user_battle[p1_id] = battle_id
@@ -1486,6 +2051,7 @@ async def resolve_battle_end(context, chat_id, winner_id, loser_id, battle):
     update_user(
         loser_id,
         deaths=loser["deaths"] + 1,
+        xp=max(0, loser["xp"] - xp_gain),
     )
 
     add_player_xp(winner_id, xp_gain)
@@ -1503,6 +2069,16 @@ async def resolve_battle_end(context, chat_id, winner_id, loser_id, battle):
         f"💀 {mention(loser)} is down. Use /heal or /revive."
     )
 
+    try:
+        await context.bot.send_message(
+            loser_id,
+            f"💀 bro <b>{mention(winner)}</b> win with u\n"
+            f"u need to upgrade ur powers use /power to check and upgrade power",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+
 
 async def attack(
     update: Update,
@@ -1519,7 +2095,22 @@ async def attack(
     opponent_id = battle_opponent(battle, user["user_id"])
     opponent = get_user(opponent_id)
 
+    if battle.get("turn") != user["user_id"]:
+        await update.message.reply_text(
+            f"⏳ Not your turn! Wait for {mention(opponent)} to move.",
+            parse_mode="HTML",
+        )
+        return
+
     dmg = random.randint(BATTLE_ATTACK_MIN, BATTLE_ATTACK_MAX)
+
+    # Apply Attack Power upgrade multiplier.
+    attack_multiplier = power_multiplier(
+        int(user["power_attack_level"] or 1),
+        int(user["power_attack_upgrades"] or 0),
+        POWER_CONFIG["attack"]["max_multiplier"],
+    )
+    dmg = int(dmg * attack_multiplier)
 
     if user["sword_durability"] > 0:
         bonus = 0.40 + (SWORD_UPGRADE_BONUS if user["sword_upgrade"] else 0)
@@ -1536,6 +2127,9 @@ async def attack(
 
     new_hp = max(0, opponent["hp"] - dmg)
     update_user(opponent_id, hp=new_hp)
+    battle["turn"] = opponent_id
+    if is_bot_player(opponent_id):
+        asyncio.create_task(bot_take_turn(context, battle))
 
     action_text = f"{mention(user)} attacked {mention(opponent)} for {dmg} damage!"
     if shield_broke:
@@ -2202,6 +2796,24 @@ def remember_group_for_events(chat_id, title):
 
     conn.commit()
     conn.close()
+
+
+async def remember_global_fight_session(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    chat = update.effective_chat
+
+    if not chat:
+        return
+
+    # Only track private chats and groups/supergroups.
+    if chat.type == "private":
+        register_global_fight_private_user(chat.id)
+        return
+
+    if chat.type in ("group", "supergroup"):
+        register_global_fight_chat(chat)
 
 
 async def remember_event_chat(
@@ -3605,14 +4217,37 @@ def power_stats_text(user):
 async def power_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = await ensure_user(update)
 
+    # Show the exact cost BEFORE the user clicks.
+    def power_button(power_type, icon, name):
+        level_field, upgrade_field = {
+            "hp": ("power_hp_level", "power_hp_upgrades"),
+            "attack": ("power_attack_level", "power_attack_upgrades"),
+            "shield": ("power_shield_level", "power_shield_upgrades"),
+            "defense": ("power_durability_level", "power_durability_upgrades"),
+        }[power_type]
+
+        level = int(user[level_field] or 1)
+        upgrades = int(user[upgrade_field] or 0)
+
+        if level >= 7:
+            label = f"{icon} {name} MAX"
+        else:
+            coins_needed, xp_needed = power_upgrade_cost(level, upgrades)
+            label = f"{icon} {name} + 💰{coins_needed} ⭐{xp_needed}"
+
+        return InlineKeyboardButton(
+            label,
+            callback_data=f"power_{power_type}",
+        )
+
     keyboard = [
         [
-            InlineKeyboardButton("❤️ Health +", callback_data="power_hp"),
-            InlineKeyboardButton("⚡ Attack +", callback_data="power_attack"),
+            power_button("hp", "❤️", "Health"),
+            power_button("attack", "⚡", "Attack"),
         ],
         [
-            InlineKeyboardButton("🛡️ Shield +", callback_data="power_shield"),
-            InlineKeyboardButton("🧱 Defense +", callback_data="power_defense"),
+            power_button("shield", "🛡️", "Shield"),
+            power_button("defense", "🧱", "Defense"),
         ],
     ]
 
@@ -3626,11 +4261,61 @@ async def power_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
 
+    if query.data == "main_menu":
+        user = await ensure_user(update)
+
+        text = (
+            f"👋 <b>Welcome to Hrishu, {mention(user)}!</b>\n\n"
+            f"🎮 <b>Your Telegram RPG & Economy Bot</b>\n"
+            f"⚔️ Fight • 💰 Earn • 🆙 Level Up • 🌌 Reach Legend\n\n"
+            f"🆔 <b>Hrishu ID:</b> <code>{user['hrishu_id']}</code>\n"
+            f"💰 <b>Coins:</b> {user['coins']}\n"
+            f"⭐ <b>XP:</b> {user['xp']}\n"
+            f"🏆 <b>Rank:</b> {get_rank(user['xp'])}\n"
+            f"❤️ <b>HP:</b> {user['hp']}/{user['max_hp']}\n\n"
+            f"👇 <b>Choose an option below:</b>"
+        )
+
+        keyboard = [
+            [InlineKeyboardButton(
+                "➕ Add Me to Group",
+                url="https://t.me/aapkahrishubot?startgroup=true"
+            )],
+            [
+                InlineKeyboardButton("👤 Profile", callback_data="profile"),
+                InlineKeyboardButton("🆔 My ID", callback_data="myid")
+            ],
+            [
+                InlineKeyboardButton("⚡ Powers", callback_data="power_menu")
+            ],
+            [
+                InlineKeyboardButton("📊 Level", callback_data="level"),
+                InlineKeyboardButton("🏆 Leaderboard", callback_data="leaderboard")
+            ],
+            [
+                InlineKeyboardButton("💰 Economy", callback_data="economy"),
+                InlineKeyboardButton("⚔️ RPG", callback_data="rpg")
+            ],
+            [
+                InlineKeyboardButton("🛒 Shop", callback_data="shop"),
+                InlineKeyboardButton("🎒 Inventory", callback_data="inventory")
+            ],
+        ]
+
+        await query.edit_message_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+
+        await query.answer()
+        return
+
     # ========================================================
     # POWER SYSTEM
     # ========================================================
 
-    if query.data.startswith("power_"):
+    if query.data.startswith("power_") and query.data != "power_menu":
         power_type = query.data.replace("power_", "", 1)
 
         if power_type not in POWER_CONFIG:
@@ -3888,6 +4573,206 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = await ensure_user(update)
 
+    # ========================================================
+    # GLOBAL FIGHT ACCEPT / REJECT
+    # ========================================================
+
+    if (
+        query.data.startswith("global_accept_")
+        or query.data.startswith("global_reject_")
+    ):
+        challenge_id = query.data.split("_", 2)[-1]
+        challenge = global_fight_challenges.get(challenge_id)
+
+        if not challenge:
+            await query.answer(
+                "This Global Fight challenge is no longer active.",
+                show_alert=True,
+            )
+            return
+
+        challenger_id = challenge["p1"]
+        opponent_id = challenge["p2"]
+
+        # Both matched players can respond.
+        if user["user_id"] not in (challenger_id, opponent_id):
+            await query.answer(
+                "You are not part of this Global Fight.",
+                show_alert=True,
+            )
+            return
+
+        challenger = get_user(challenger_id)
+        opponent = get_user(opponent_id)
+
+        if not challenger or not opponent:
+            remove_global_fight_challenge(challenge_id)
+            await query.answer(
+                "One of the players is no longer available.",
+                show_alert=True,
+            )
+            return
+
+        # ----------------------------------------------------
+        # REJECT
+        # ----------------------------------------------------
+        if query.data.startswith("global_reject_"):
+            remove_global_fight_challenge(challenge_id)
+
+            result_text = (
+                "❌ <b>GLOBAL FIGHT REJECTED</b>\\n\\n"
+                f"⚔️ {mention(opponent)} rejected the challenge "
+                f"from {mention(challenger)}."
+            )
+
+            try:
+                await query.edit_message_text(
+                    result_text,
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+
+            await broadcast_global_fight_challenge(
+                context,
+                result_text,
+                exclude_chat_id=update.effective_chat.id,
+            )
+
+            return
+
+        # ----------------------------------------------------
+        # ACCEPT
+        # ----------------------------------------------------
+
+        # Record this player's acceptance.
+        challenge.setdefault("accepted", set())
+        challenge["accepted"].add(user["user_id"])
+
+        await query.answer("✅ Accepted!")
+
+        # Both players must accept before the battle starts.
+        if len(challenge["accepted"]) < 2:
+            try:
+                await query.edit_message_text(
+                    "🌎 <b>GLOBAL FIGHT</b>\n\n"
+                    f"⚔️ {mention(challenger)} vs {mention(opponent)}\n\n"
+                    "✅ You accepted!\n"
+                    "⏳ Waiting for the other player to accept...",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+
+            return
+
+        # Both players have accepted.
+        # Both players must still be alive.
+        if challenger["hp"] <= 0 or opponent["hp"] <= 0:
+            remove_global_fight_challenge(challenge_id)
+
+            result_text = (
+                "💀 <b>GLOBAL FIGHT CANCELLED</b>\\n\\n"
+                "One of the players is down."
+            )
+
+            try:
+                await query.edit_message_text(
+                    result_text,
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+
+            await broadcast_global_fight_challenge(
+                context,
+                result_text,
+                exclude_chat_id=update.effective_chat.id,
+            )
+
+            return
+
+        # Prevent duplicate battles.
+        challenger_battle = get_active_battle(challenger_id)
+        opponent_battle = get_active_battle(opponent_id)
+
+        if challenger_battle or opponent_battle:
+            remove_global_fight_challenge(challenge_id)
+
+            result_text = (
+                "⚔️ <b>GLOBAL FIGHT CANCELLED</b>\\n\\n"
+                "One of the players is already in a battle."
+            )
+
+            try:
+                await query.edit_message_text(
+                    result_text,
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+
+            await broadcast_global_fight_challenge(
+                context,
+                result_text,
+                exclude_chat_id=update.effective_chat.id,
+            )
+
+            return
+
+        # Create battle.
+        battle = new_battle(
+            update.effective_chat.id,
+            challenger_id,
+            opponent_id,
+        )
+
+        fee1 = int(challenger["coins"] * BATTLE_ENTRY_FEE_PCT)
+        fee2 = int(opponent["coins"] * BATTLE_ENTRY_FEE_PCT)
+
+        update_user(
+            challenger_id,
+            coins=challenger["coins"] - fee1,
+        )
+
+        update_user(
+            opponent_id,
+            coins=opponent["coins"] - fee2,
+        )
+
+        battle["status"] = "active"
+        battle["pool"] = fee1 + fee2
+        battle["status_message_id"] = query.message.message_id
+
+        remove_global_fight_challenge(challenge_id)
+
+        if is_bot_player(battle["turn"]):
+            asyncio.create_task(bot_take_turn(context, battle))
+
+        battle_text = render_battle_hud(
+            battle,
+            "🌎 Global Fight started!",
+        )
+
+        try:
+            await query.edit_message_text(
+                battle_text,
+                parse_mode="HTML",
+                reply_markup=battle_keyboard(),
+            )
+        except Exception:
+            pass
+
+        # Tell all other registered chats that the fight started.
+        await broadcast_global_fight_challenge(
+            context,
+            battle_text,
+            battle_keyboard(),
+            exclude_chat_id=update.effective_chat.id,
+        )
+
+        return
+
     if query.data.startswith("duel_accept_") or query.data.startswith("duel_reject_"):
         battle_id = int(query.data.split("_")[-1])
         battle = battles.get(battle_id)
@@ -3944,7 +4829,22 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             opponent_id = battle_opponent(battle, user["user_id"])
             opponent = get_user(opponent_id)
 
+            if battle.get("turn") != user["user_id"]:
+                await query.answer(
+                    "⏳ Not your turn!",
+                    show_alert=True,
+                )
+                return
+
             dmg = random.randint(BATTLE_ATTACK_MIN, BATTLE_ATTACK_MAX)
+
+            # Apply Attack Power upgrade multiplier.
+            attack_multiplier = power_multiplier(
+                int(user["power_attack_level"] or 1),
+                int(user["power_attack_upgrades"] or 0),
+                POWER_CONFIG["attack"]["max_multiplier"],
+            )
+            dmg = int(dmg * attack_multiplier)
 
             if user["sword_durability"] > 0:
                 bonus = 0.40 + (
@@ -3978,6 +4878,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 opponent_id,
                 hp=new_hp,
             )
+            battle["turn"] = opponent_id
+            if is_bot_player(opponent_id):
+                asyncio.create_task(bot_take_turn(context, battle))
 
             action_text = (
                 f"{mention(user)} attacked "
@@ -4430,6 +5333,53 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"<code>{user['hrishu_id']}</code>"
         )
 
+    elif query.data == "power_menu":
+        def power_button(power_type, icon, name):
+            level_field, upgrade_field = {
+                "hp": ("power_hp_level", "power_hp_upgrades"),
+                "attack": ("power_attack_level", "power_attack_upgrades"),
+                "shield": ("power_shield_level", "power_shield_upgrades"),
+                "defense": ("power_durability_level", "power_durability_upgrades"),
+            }[power_type]
+
+            level = int(user[level_field] or 1)
+            upgrades = int(user[upgrade_field] or 0)
+
+            if level >= 7:
+                label = f"{icon} {name} MAX"
+            else:
+                coins_needed, xp_needed = power_upgrade_cost(level, upgrades)
+                label = f"{icon} {name} + 💰{coins_needed} ⭐{xp_needed}"
+
+            return InlineKeyboardButton(
+                label,
+                callback_data=f"power_{power_type}",
+            )
+
+        keyboard = [
+            [
+                power_button("hp", "❤️", "Health"),
+                power_button("attack", "⚡", "Attack"),
+            ],
+            [
+                power_button("shield", "🛡️", "Shield"),
+                power_button("defense", "🧱", "Defense"),
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔙 Back to Main Menu",
+                    callback_data="main_menu",
+                )
+            ],
+        ]
+
+        await query.edit_message_text(
+            power_stats_text(user),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return
+
     elif query.data == "level":
         text = (
             f"📊 <b>Your Level</b>\n\n"
@@ -4635,6 +5585,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /fight
 /kill
 /rob
+/power
 
 🛒 SHOP
 /shop
@@ -6119,6 +7070,17 @@ async def fight(
 ):
     user = await ensure_user(update)
 
+    # PRIVATE /fight = Global Fight matchmaking.
+    # Group /fight keeps the existing normal duel behavior.
+    if (
+        update.message
+        and update.effective_chat
+        and update.effective_chat.type == "private"
+        and not context.args
+    ):
+        await global_fight(update, context)
+        return
+
     remaining = cooldown_remaining(
         user["last_fight"],
         FIGHT_COOLDOWN,
@@ -6205,6 +7167,224 @@ async def fight(
 
 
 
+
+
+# ============================================================
+# GLOBAL FIGHT
+# ============================================================
+
+async def global_fight(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    user = await ensure_user(update)
+
+    if not update.message or not update.effective_chat:
+        return
+
+    chat = update.effective_chat
+
+    # Global Fight is used by private /fight.
+    register_global_fight_chat(chat)
+    register_global_fight_user(user["user_id"])
+
+    remaining = global_fight_cooldown_remaining(user["user_id"])
+
+    if remaining > 0:
+        await update.message.reply_text(
+            f"⏳ Global Fight cooldown: {remaining}s"
+        )
+        return
+
+    if user["hp"] <= 0:
+        await update.message.reply_text(
+            "💀 You are down. Use /heal or /revive first."
+        )
+        return
+
+    init_global_fight_matchmaking_db()
+
+    # --------------------------------------------------------
+    # FIRST: look for an already waiting player in SQLite.
+    # --------------------------------------------------------
+
+    opponent_id, opponent_data = db_global_fight_find_opponent(
+        user["user_id"]
+    )
+
+    if opponent_id is not None:
+        opponent = get_user(opponent_id)
+
+        if not opponent or opponent["hp"] <= 0:
+            db_global_fight_remove(opponent_id)
+
+            await update.message.reply_text(
+                "⚔️ No available player found. Try /fight again."
+            )
+            return
+
+        # Remove BOTH immediately.
+        db_global_fight_remove(opponent_id)
+        db_global_fight_remove(user["user_id"])
+
+        set_global_fight_cooldown(user["user_id"])
+        set_global_fight_cooldown(opponent["user_id"])
+
+        challenge = new_global_fight_challenge(
+            opponent["user_id"],
+            user["user_id"],
+        )
+
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "✅ Accept",
+                    callback_data=f"global_accept_{challenge['id']}",
+                ),
+                InlineKeyboardButton(
+                    "❌ Reject",
+                    callback_data=f"global_reject_{challenge['id']}",
+                ),
+            ]
+        ])
+
+        text = (
+            "🌎 <b>GLOBAL FIGHT CHALLENGE!</b>\n\n"
+            f"⚔️ {mention(opponent)} has been matched with "
+            f"{mention(user)}!\n\n"
+            "💰 Entry fee: "
+            f"{int(BATTLE_ENTRY_FEE_PCT * 100)}% of wallet each\n"
+            f"🏆 Winner takes {BATTLE_WIN_BASE_COINS:,} coins "
+            "+ the entry pool + "
+            f"{int(BATTLE_WIN_XP_PCT * 100)}% of loser's XP\n\n"
+            "⚔️ Both players must choose:"
+        )
+
+        # Send to the player who just joined.
+        await update.message.reply_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+
+        # Send to the player who was already waiting.
+        opponent_chat_id = opponent_data.get("chat_id")
+
+        if opponent_chat_id:
+            try:
+                await context.bot.send_message(
+                    chat_id=opponent_chat_id,
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=keyboard,
+                )
+            except Exception:
+                pass
+
+        return
+
+    # --------------------------------------------------------
+    # NOBODY WAITING: enter SQLite queue.
+    # --------------------------------------------------------
+
+    db_global_fight_add(
+        user["user_id"],
+        chat.id,
+        chat.type,
+    )
+
+    set_global_fight_cooldown(user["user_id"])
+
+    search_message = await update.message.reply_text(
+        "🌎 <b>GLOBAL FIGHT</b>\n\n"
+        "🔎 Searching for an opponent...\n"
+        "⏳ Waiting: <b>20s</b>",
+        parse_mode="HTML",
+    )
+
+    # --------------------------------------------------------
+    # Wait up to 20 seconds.
+    # The SECOND player will remove us from the DB when matched.
+    # --------------------------------------------------------
+
+    for remaining_seconds in range(19, 0, -1):
+        await asyncio.sleep(1)
+
+        # If another player matched us, we're done.
+        if not db_global_fight_is_waiting(user["user_id"]):
+            return
+
+        if remaining_seconds == 7:
+            db_global_fight_remove(user["user_id"])
+
+            bot_opponent = get_random_bot_opponent()
+
+            challenge = new_global_fight_challenge(
+                bot_opponent["user_id"],
+                user["user_id"],
+            )
+            challenge["accepted"] = {bot_opponent["user_id"]}
+            challenge["chat_id"] = chat.id
+
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "\u2705 Accept",
+                        callback_data=f"global_accept_{challenge['id']}",
+                    ),
+                    InlineKeyboardButton(
+                        "\u274c Reject",
+                        callback_data=f"global_reject_{challenge['id']}",
+                    ),
+                ]
+            ])
+
+            text = (
+                "\U0001F30E <b>GLOBAL FIGHT CHALLENGE!</b>\n\n"
+                f"\u2694\ufe0f {mention(bot_opponent)} wants to fight "
+                f"{mention(user)}!\n\n"
+                "\U0001F4B0 Entry fee: "
+                f"{int(BATTLE_ENTRY_FEE_PCT * 100)}% of wallet each\n"
+                f"\U0001F3C6 Winner takes {BATTLE_WIN_BASE_COINS:,} coins "
+                "+ the entry pool + "
+                f"{int(BATTLE_WIN_XP_PCT * 100)}% of loser's XP\n\n"
+                f"{mention(user)}, do you accept?"
+            )
+
+            try:
+                await search_message.edit_text(
+                    text,
+                    parse_mode="HTML",
+                    reply_markup=keyboard,
+                )
+            except Exception:
+                pass
+
+            return
+
+        if remaining_seconds in (15, 10, 5):
+            try:
+                await search_message.edit_text(
+                    "🌎 <b>GLOBAL FIGHT</b>\n\n"
+                    "🔎 Searching for an opponent...\n"
+                    f"⏳ Waiting: <b>{remaining_seconds}s</b>",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+
+    # Nobody matched.
+    db_global_fight_remove(user["user_id"])
+
+    try:
+        await search_message.edit_text(
+            "🌎 <b>GLOBAL FIGHT</b>\n\n"
+            "❌ No player found.\n"
+            "Try /fight again to search.",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
 
 
 # ============================================================
@@ -7938,6 +9118,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("🆔 My ID", callback_data="myid")
         ],
         [
+            InlineKeyboardButton("⚡ Powers", callback_data="power_menu")
+        ],
+        [
             InlineKeyboardButton("📊 Level", callback_data="level"),
             InlineKeyboardButton("🏆 Leaderboard", callback_data="leaderboard")
         ],
@@ -7973,6 +9156,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     init_event_db()
     init_db()
+    init_global_fight_db()
     init_protection_db()
     init_bank_db()
     init_ai_memory_db()
@@ -7995,6 +9179,16 @@ def main():
             remember_event_chat,
         ),
         group=-1,
+    )
+
+    # Global Fight session tracker.
+    # Refreshes the 5-minute activity window for DMs and groups.
+    application.add_handler(
+        MessageHandler(
+            filters.ALL,
+            remember_global_fight_session,
+        ),
+        group=-2,
     )
 
     application.add_handler(
