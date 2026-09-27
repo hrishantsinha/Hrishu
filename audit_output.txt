@@ -1,0 +1,210 @@
+=== FILES ===
+-rw-r--r-- 1 bhaiyatechno3 bhaiyatechno3 268176 Sep 26 18:57 bot.py
+-rw-r--r-- 1 bhaiyatechno3 bhaiyatechno3  56733 Sep 23 20:25 bot_backup.py
+-rw-r--r-- 1 bhaiyatechno3 bhaiyatechno3  77243 Sep 24 08:10 bot_before_ai_backup.py
+-rw-r--r-- 1 bhaiyatechno3 bhaiyatechno3  64665 Sep 23 21:03 bot_before_bank_rules_backup.py
+-rw-r--r-- 1 bhaiyatechno3 bhaiyatechno3  66221 Sep 23 21:09 bot_before_give_fix_backup.py
+-rw-r--r-- 1 bhaiyatechno3 bhaiyatechno3  60222 Sep 23 20:49 bot_before_protect_backup.py
+-rw-r--r-- 1 bhaiyatechno3 bhaiyatechno3  62964 Sep 23 20:53 bot_before_protect_wiring_backup.py
+-rw-r--r-- 1 bhaiyatechno3 bhaiyatechno3  66221 Sep 24 07:52 bot_before_work_game_backup.py
+-rw-r--r-- 1 bhaiyatechno3 bhaiyatechno3  71048 Sep 24 07:54 bot_before_work_repair_backup.py
+-rw-r--r-- 1 bhaiyatechno3 bhaiyatechno3  71532 Sep 24 08:01 bot_before_work_variety_backup.py
+-rw-r--r-- 1 bhaiyatechno3 bhaiyatechno3   3230 Sep 26 10:01 comeback_bonus.py
+-rw-r--r-- 1 bhaiyatechno3 bhaiyatechno3  42583 Sep 26 18:50 database.py
+-rw-r--r-- 1 bhaiyatechno3 bhaiyatechno3   6814 Sep 23 21:03 database_before_bank_interest_backup.py
+-rw-r--r-- 1 bhaiyatechno3 bhaiyatechno3   6692 Sep 23 20:49 database_before_protect_backup.py
+-rw-r--r-- 1 bhaiyatechno3 bhaiyatechno3  18707 Sep 26 19:10 pokemon_commands.py
+
+=== LINE COUNTS ===
+ 10006 bot.py
+  2419 bot_backup.py
+  3148 bot_before_ai_backup.py
+  2720 bot_before_bank_rules_backup.py
+  2759 bot_before_give_fix_backup.py
+  2566 bot_before_protect_backup.py
+  2669 bot_before_protect_wiring_backup.py
+  2759 bot_before_work_game_backup.py
+  2940 bot_before_work_repair_backup.py
+  2964 bot_before_work_variety_backup.py
+   125 comeback_bonus.py
+  1493 database.py
+   341 database_before_bank_interest_backup.py
+   338 database_before_protect_backup.py
+   402 pokemon_commands.py
+ 37649 total
+
+=== COMMANDS IN bot.py ===
+9704:        CommandHandler("start", start)
+9707:        CommandHandler("fakechallenge", fake_global_challenge)
+9729:        CommandHandler("g", event_guess)
+9733:        CommandHandler("seteventimage", set_event_image)
+9737:        CommandHandler("eventnow", event_now)
+9741:        CommandHandler("stars", stars_command)
+9757:        CommandHandler("help", help_command)
+9760:        CommandHandler("terms", terms)
+9764:        CommandHandler("paysupport", paysupport)
+9767:        CommandHandler("ask", ask)
+9770:        CommandHandler("forgetai", forgetai)
+9773:        CommandHandler("teach", teach_ai)
+9778:        CommandHandler("profile", profile)
+9781:        CommandHandler("id", id_command)
+9784:        CommandHandler("level", level)
+9787:        CommandHandler("inventory", inventory)
+9792:        CommandHandler("bank", bank_command)
+9795:        CommandHandler("bal", balance)
+9798:        CommandHandler("protect", protect)
+9801:        CommandHandler("daily", daily)
+9804:        CommandHandler("work", work)
+9807:        CommandHandler("give", give)
+9810:        CommandHandler("deposit", deposit)
+9813:        CommandHandler("withdraw", withdraw)
+9818:        CommandHandler("coinflip", coinflip)
+9821:        CommandHandler("dice", dice)
+9826:        CommandHandler("heal", heal)
+9829:        CommandHandler("revive", revive)
+9832:        CommandHandler("attack", attack)
+9835:        CommandHandler("power", power_command)
+9837:    application.add_handler(CommandHandler("use", use_item))
+9838:    application.add_handler(CommandHandler("potion", potion))
+9839:    application.add_handler(CommandHandler("shield", shield))
+9840:    application.add_handler(CommandHandler("sword", sword))
+9842:        CommandHandler("upgradesword", upgrade_sword)
+9845:        CommandHandler("fight", fight)
+9847:    application.add_handler(CommandHandler("pokedex", pokedex))
+9848:    application.add_handler(CommandHandler("pokeshop", pokeshop))
+9849:    application.add_handler(CommandHandler("buypoke", buypoke))
+9850:    application.add_handler(CommandHandler("buyball", buyball))
+9851:    application.add_handler(CommandHandler("myballs", myballs))
+9852:    application.add_handler(CommandHandler("mypokemon", mypokemon))
+9853:    application.add_handler(CommandHandler("pteam", pteam))
+9854:    application.add_handler(CommandHandler("pteamset", pteamset))
+9855:    application.add_handler(CommandHandler("pwild", pwild))
+9856:    application.add_handler(CommandHandler("pbattle", pbattle))
+9857:    application.add_handler(CommandHandler("pcatch", pcatch)
+9859:    application.add_handler(CommandHandler("pheal", pheal)
+9861:    application.add_handler(CommandHandler("pjoin", pjoin))
+9862:    application.add_handler(CommandHandler("pleaderboard", pleaderboard))
+9863:    application.add_handler(CommandHandler("pstats", pstats))
+9864:    application.add_handler(CommandHandler("ppvp", ppvp))
+9865:    application.add_handler(CommandHandler("ppvpaccept", ppvpaccept))
+9866:    application.add_handler(CommandHandler("ppvpattack", ppvpattack)
+9871:        CommandHandler("kill", kill)
+9874:        CommandHandler("rob", rob)
+9879:        CommandHandler("shop", shop)
+9882:        CommandHandler("buy", buy)
+9887:        CommandHandler("leaderboard", leaderboard)
+9892:        CommandHandler("staff", staff)
+9895:        CommandHandler("stafflist", stafflist)
+9898:        CommandHandler("promote", promote)
+9901:        CommandHandler("promote2", promote2)
+9904:        CommandHandler("setsecondowner", setsecondowner)
+9907:        CommandHandler("removesecondowner", removesecondowner)
+9910:        CommandHandler("demote", demote)
+9913:        CommandHandler("givemoney", givemoney)
+9916:        CommandHandler("take", take)
+9919:        CommandHandler("setmoney", setmoney)
+9924:        CommandHandler("warn", warn)
+9927:        CommandHandler("warnings", warnings)
+9930:        CommandHandler("mute", mute)
+9933:        CommandHandler("unmute", unmute)
+9936:        CommandHandler("ban", ban)
+9939:        CommandHandler("unban", unban)
+9944:        CommandHandler("rules", rules)
+
+=== FUNCTIONS IN pokemon_commands.py ===
+14:async def pokedex(update: Update, context: ContextTypes.DEFAULT_TYPE):
+24:async def pokeshop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+38:async def buypoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
+59:async def buyball(update: Update, context: ContextTypes.DEFAULT_TYPE):
+78:async def myballs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+84:async def mypokemon(update: Update, context: ContextTypes.DEFAULT_TYPE):
+98:async def pteam(update: Update, context: ContextTypes.DEFAULT_TYPE):
+111:async def pteamset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+130:async def pwild(update: Update, context: ContextTypes.DEFAULT_TYPE):
+142:async def pbattle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+217:async def pheal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+240:async def pjoin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+266:async def pleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+278:async def pstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+306:async def ppvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+321:async def ppvpaccept(update: Update, context: ContextTypes.DEFAULT_TYPE):
+333:async def ppvpattack(update: Update, context: ContextTypes.DEFAULT_TYPE):
+356:async def pcatch(update: Update, context: ContextTypes.DEFAULT_TYPE):
+374:async def pokemon_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+=== FUNCTIONS IN database.py ===
+8:def get_connection():
+18:def generate_hrishu_id(cur):
+35:def init_db():
+175:def init_global_fight_db():
+218:def create_user(user_id, username=None, first_name="User"):
+265:def get_user(user_id):
+281:def update_user(user_id, **fields):
+367:def add_coins(user_id, amount):
+383:def add_xp(user_id, amount):
+420:def cooldown_remaining(last_time, cooldown):
+446:def init_bank_db():
+497:def generate_bank_account_number(cur):
+510:def generate_bank_account_code(cur):
+528:def generate_upi_id(cur, account_number):
+543:def hash_hpin(hpin):
+560:def verify_hpin(hpin, stored_hash):
+582:def get_bank_account(user_id, bank_name="Hrishu Bank"):
+604:def get_user_bank_accounts(user_id):
+625:def get_bank_account_by_number(account_number):
+646:def get_bank_account_by_upi(upi_id):
+667:def create_bank_account(user_id, bank_name, hpin):
+722:def add_bank_transaction(
+764:def get_last_bank_transactions(user_id, limit=5):
+785:def transfer_bank_coins(
+903:def get_user_by_hrishu_id(hrishu_id):
+921:def get_user_by_username(username):
+939:def get_bank_account_by_username(username):
+970:def init_pokemon_db():
+1086:def type_multiplier(atk_type, def_type1, def_type2=None):
+1093:def get_species_by_id(species_id):
+1098:def get_move_by_id(move_id):
+1103:def get_species_moves(species_id, level):
+1109:def calc_stats(species_row, level):
+1116:def xp_needed(level):
+1119:def get_coins(user_id):
+1125:def add_coins(user_id, delta):
+1130:def ensure_pokemon_inventory(user_id):
+1135:def get_balls(user_id):
+1141:def add_balls(user_id, ball_type, qty):
+1147:def use_ball(user_id, ball_type):
+1157:def get_user_pokemon_list(user_id):
+1165:def get_pokemon_by_id(poke_id):
+1172:def get_team(user_id):
+1179:def set_team_slot(user_id, poke_id, slot):
+1189:def buy_pokemon(user_id, species_id):
+1204:def spawn_wild(chat_id):
+1227:def get_wild(chat_id):
+1232:def clear_wild(chat_id):
+1237:def damage_wild(chat_id, dmg):
+1245:def add_pokemon_xp(poke_id, amount):
+1261:def catch_pokemon(user_id, chat_id, ball_type):
+1287:def heal_team(user_id):
+1300:def damage_pokemon(poke_id, dmg):
+1312:def check_evolution(poke_id):
+1332:def init_pvp_pokemon_db():
+1347:def create_pvp_challenge(chat_id, challenger_id, opponent_id):
+1361:def accept_pvp_challenge(chat_id, opponent_id):
+1377:def get_active_pvp(chat_id, user_id):
+1383:def end_pvp_battle(battle_id):
+1388:def pvp_attack(chat_id, user_id):
+1435:def init_pokemon_team_db():
+1446:def has_joined_pokemon(user_id):
+1452:def check_pokemon_eligibility(user_id):
+1467:def team_name_taken(name):
+1473:def join_pokemon_system(user_id, team_name):
+1479:def get_pokemon_leaderboard(limit=10):
+
+=== spawn_wild SEARCH ===
+database.py:1204:def spawn_wild(chat_id):
+pokemon_commands.py:135:    species_row, level, hp = database.spawn_wild(chat_id)
+
+=== RUNNING PYTHON PROCESSES ===
+bhaiyat+    5977  0.6  3.1 175716 87664 pts/0    Sl   19:10   0:06 python3 bot.py
+bhaiyat+    5979  0.3  3.1 174728 87796 ?        Ssl  19:11   0:04 /home/bhaiyatechno3/Hrishu/venv/bin/python /home/bhaiyatechno3/Hrishu/bot.py
+bhaiyat+    6071  0.0  0.0   7056  2148 pts/0    S+   19:28   0:00 grep python

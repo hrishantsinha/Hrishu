@@ -1,0 +1,558 @@
+import random
+import database
+from telegram import Update
+from telegram.ext import ContextTypes, ApplicationHandlerStop
+
+BALL_PRICES = {"pokeball": 150, "greatball": 500, "masterball": 5000}
+BALL_NAMES = {"pokeball": "Poke Ball", "greatball": "Great Ball", "masterball": "Master Ball"}
+
+def hpbar(cur, mx, length=10):
+    if mx <= 0: mx = 1
+    filled = int(length * max(0, cur) / mx)
+    return "🟩" * filled + "⬜" * (length - filled)
+
+async def pokedex(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    conn = database.get_connection(); cur = conn.cursor()
+    cur.execute("SELECT species_id,name,type1,type2 FROM pokemon_species ORDER BY species_id")
+    rows = cur.fetchall(); conn.close()
+    lines = ["📖 POKEDEX"]
+    for r in rows:
+        t = r["type1"] + (f"/{r['type2']}" if r["type2"] else "")
+        lines.append(f"#{r['species_id']} {r['name']} ({t})")
+    await update.message.reply_text("\n".join(lines))
+
+async def pokeshop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    conn = database.get_connection(); cur = conn.cursor()
+    cur.execute("SELECT species_id,name,type1,type2,price FROM pokemon_species ORDER BY price")
+    rows = cur.fetchall(); conn.close()
+    lines = ["🛒 POKEMON SHOP", "Buy: /buypoke <id>", ""]
+    for r in rows:
+        t = r["type1"] + (f"/{r['type2']}" if r["type2"] else "")
+        lines.append(f"#{r['species_id']} {r['name']} ({t}) — 💰{r['price']}")
+    lines.append("")
+    lines.append("🎾 Balls: /buyball pokeball|greatball|masterball <qty>")
+    for k,v in BALL_PRICES.items():
+        lines.append(f"{BALL_NAMES[k]} — 💰{v} each")
+    await update.message.reply_text("\n".join(lines))
+
+async def buypoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not database.has_joined_pokemon(user_id):
+        await update.message.reply_text("Join the Pokemon system first with /pjoin")
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /buypoke <species_id>")
+        return
+    try:
+        sid = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("Invalid id.")
+        return
+    species_row, status = database.buy_pokemon(user_id, sid)
+    if status == "not_found":
+        await update.message.reply_text("No such Pokemon.")
+    elif status == "no_coins":
+        await update.message.reply_text(f"Not enough coins. {species_row['name']} costs 💰{species_row['price']}.")
+    else:
+        await update.message.reply_text(f"✅ You bought {species_row['name']}! Check /mypokemon")
+
+async def buyball(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if len(context.args) < 2 or context.args[0] not in BALL_PRICES:
+        await update.message.reply_text("Usage: /buyball pokeball|greatball|masterball <qty>")
+        return
+    ball = context.args[0]
+    try:
+        qty = int(context.args[1])
+    except ValueError:
+        await update.message.reply_text("Invalid quantity.")
+        return
+    cost = BALL_PRICES[ball] * qty
+    if database.get_coins(user_id) < cost:
+        await update.message.reply_text(f"Not enough coins. Need 💰{cost}.")
+        return
+    database.add_coins(user_id, -cost)
+    database.add_balls(user_id, ball, qty)
+    await update.message.reply_text(f"✅ Bought {qty}x {BALL_NAMES[ball]} for 💰{cost}.")
+
+async def myballs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    b = database.get_balls(update.effective_user.id)
+    await update.message.reply_text(
+        f"🎾 Poke Ball: {b['pokeball']}\n⚪ Great Ball: {b['greatball']}\n🟣 Master Ball: {b['masterball']}"
+    )
+
+async def mypokemon(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    rows = database.get_user_pokemon_list(update.effective_user.id)
+    if not rows:
+        await update.message.reply_text("You don't own any Pokemon yet. Try /pokeshop or /pwild")
+        return
+    lines = ["📋 YOUR POKEMON"]
+    for r in rows:
+        tag = " (TEAM)" if r["in_team"] else ""
+        nm = r["nickname"] or r["name"]
+        max_hp = database.calc_stats(r, r["level"])["hp"]
+        status = "💀 FAINTED" if r["current_hp"] <= 0 else f"{hpbar(r['current_hp'], max_hp)} {r['current_hp']}/{max_hp}"
+        lines.append(f"#{r['poke_id']} {nm} Lv.{r['level']} {r['type1']}{tag}\n   {status}")
+    await update.message.reply_text("\n".join(lines))
+
+async def pteam(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    rows = database.get_team(update.effective_user.id)
+    if not rows:
+        await update.message.reply_text("Your team is empty. Set with /pteamset <poke_id> <slot 1-6>")
+        return
+    lines = ["⚔️ YOUR TEAM"]
+    for r in rows:
+        nm = r["nickname"] or r["name"]
+        max_hp = database.calc_stats(r, r["level"])["hp"]
+        status = "💀 FAINTED" if r["current_hp"] <= 0 else f"{hpbar(r['current_hp'], max_hp)} {r['current_hp']}/{max_hp}"
+        lines.append(f"Slot {r['team_slot']}: {nm} Lv.{r['level']} {r['type1']}\n   {status}")
+    await update.message.reply_text("\n".join(lines))
+
+async def pteamset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if len(context.args) < 2:
+        await update.message.reply_text("Usage: /pteamset <poke_id> <slot 1-6>")
+        return
+    try:
+        poke_id = int(context.args[0]); slot = int(context.args[1])
+    except ValueError:
+        await update.message.reply_text("Invalid input.")
+        return
+    if slot < 1 or slot > 6:
+        await update.message.reply_text("Slot must be 1-6.")
+        return
+    ok = database.set_team_slot(user_id, poke_id, slot)
+    if ok:
+        await update.message.reply_text(f"✅ Set to slot {slot}.")
+    else:
+        await update.message.reply_text("That Pokemon isn't yours.")
+
+async def pwild(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not database.has_joined_pokemon(update.effective_user.id):
+        await update.message.reply_text("Join the Pokemon system first with /pjoin")
+        return
+    chat_id = update.effective_chat.id
+    species_row, level, hp, shiny = database.spawn_wild(chat_id)
+    shiny_tag = "✨ SHINY " if shiny else ""
+    await update.message.reply_text(
+        f"🌿 A wild {shiny_tag}{species_row['name']} (Lv.{level}) appeared!\n"
+        f"{hpbar(hp,hp)} {hp}/{hp} HP\n"
+        f"Fight it: /pbattle   |   Try to catch: /pcatch pokeball"
+    )
+
+async def pbattle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    wild = database.get_wild(chat_id)
+    if not wild:
+        await update.message.reply_text("No wild Pokemon here. Use /pwild first.")
+        return
+    team = database.get_team(user_id)
+    if not team:
+        await update.message.reply_text("You have no Pokemon in your team. /pteamset first.")
+        return
+    fighter = None
+    for p in team:
+        if p["current_hp"] > 0:
+            fighter = p
+            break
+    if not fighter:
+        await update.message.reply_text("💀 All your team Pokemon have fainted! Use /pheal.")
+        return
+
+    species_row = database.get_species_by_id(wild["species_id"])
+    moves = database.get_species_moves(fighter["species_id"], fighter["level"])
+    if not moves:
+        await update.message.reply_text("Your Pokemon knows no moves yet.")
+        return
+
+    if not context.args:
+        lines = [f"Choose your move (/pbattle <number>):"]
+        for i, m in enumerate(moves, 1):
+            lines.append(f"{i}. {m['name']} ({m['type']}, pwr {m['power']})")
+        await update.message.reply_text("\n".join(lines))
+        return
+
+    try:
+        idx = int(context.args[0]) - 1
+        move = moves[idx]
+    except (ValueError, IndexError):
+        await update.message.reply_text("Invalid move number. Run /pbattle to see options.")
+        return
+
+    my_stats = database.calc_stats(fighter, fighter["level"])
+    base_dmg = max(1, int(move["power"] * my_stats["atk"] / 50))
+    mult = database.type_multiplier(move["type"], species_row["type1"], species_row["type2"])
+    dmg = max(1, int(base_dmg * mult))
+    new_wild_hp = database.damage_wild(chat_id, dmg)
+    eff = "It's super effective!" if mult > 1 else ("It's not very effective..." if mult < 1 else "")
+    lines = [f"{fighter['name']} used {move['name']}! {dmg} dmg. {eff}",
+             f"{hpbar(new_wild_hp, wild['max_hp'])} {new_wild_hp}/{wild['max_hp']} HP (wild)"]
+
+    if new_wild_hp <= 0:
+        xp_gain = wild["level"] * 15
+        level_result = database.add_pokemon_xp(fighter["poke_id"], xp_gain)
+        database.clear_wild(chat_id)
+        lines.append(f"💥 Wild {species_row['name']} fainted! +{xp_gain} XP.")
+        if level_result and level_result[1]:
+            lines.append(f"⬆️ {fighter['name']} leveled up to Lv.{level_result[0]}!")
+            evo = database.check_evolution(fighter["poke_id"])
+            if evo:
+                lines.append(f"✨ {evo[0]} evolved into {evo[1]}!")
+    else:
+        wild_moves = database.get_species_moves(wild["species_id"], wild["level"])
+        wild_move = wild_moves[-1] if wild_moves else None
+        if wild_move:
+            wild_stats = database.calc_stats(species_row, wild["level"])
+            wdmg_base = max(1, int(wild_move["power"] * wild_stats["atk"] / 50))
+            wmult = database.type_multiplier(wild_move["type"], fighter["type1"], fighter["type2"])
+            wdmg = max(1, int(wdmg_base * wmult))
+            new_my_hp = database.damage_pokemon(fighter["poke_id"], wdmg)
+            lines.append(f"Wild {species_row['name']} used {wild_move['name']}! {wdmg} dmg to {fighter['name']}.")
+            lines.append(f"{hpbar(new_my_hp, my_stats['hp'])} {new_my_hp}/{my_stats['hp']} HP ({fighter['name']})")
+            if new_my_hp <= 0:
+                lines.append(f"💀 {fighter['name']} fainted! Use /pheal.")
+
+    await update.message.reply_text("\n".join(lines))
+
+async def pheal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    cost = 300
+    team = database.get_team(user_id)
+    if not team:
+        await update.message.reply_text("You have no Pokemon in your team to heal.")
+        return
+    needs_heal = False
+    for p in team:
+        max_hp = database.calc_stats(p, p["level"])["hp"]
+        if p["current_hp"] < max_hp:
+            needs_heal = True
+            break
+    if not needs_heal:
+        await update.message.reply_text("✅ Your team is already at full HP.")
+        return
+    if database.get_coins(user_id) < cost:
+        await update.message.reply_text(f"Healing costs 💰{cost}. Not enough coins.")
+        return
+    database.add_coins(user_id, -cost)
+    healed = database.heal_team(user_id)
+    await update.message.reply_text(f"🏥 Healed {healed} Pokemon to full HP for 💰{cost}.")
+
+async def pjoin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    existing = database.has_joined_pokemon(user_id)
+    if existing:
+        await update.message.reply_text(f"Already joined as team \"{existing}\".")
+        return
+    eligible, reasons = database.check_pokemon_eligibility(user_id)
+    if not eligible:
+        await update.message.reply_text("❌ Not eligible yet:\n" + "\n".join(f"• {r}" for r in reasons))
+        return
+    if not context.args:
+        await update.message.reply_text("Eligible! Choose a unique team name:\n/pjoin <TeamName>")
+        return
+    team_name = " ".join(context.args).strip()
+    if len(team_name) < 3 or len(team_name) > 20:
+        await update.message.reply_text("Team name must be 3-20 characters.")
+        return
+    if database.team_name_taken(team_name):
+        await update.message.reply_text(f"❌ \"{team_name}\" is taken. Pick another.")
+        return
+    try:
+        database.join_pokemon_system(user_id, team_name)
+        await update.message.reply_text(f"🎉 Welcome! Team \"{team_name}\" created. Use /pokeshop or /pwild.")
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Error creating team: {e}")
+
+async def pleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    rows = database.get_pokemon_leaderboard(10)
+    if not rows:
+        await update.message.reply_text("No teams yet. Be first with /pjoin!")
+        return
+    lines = ["🏆 POKEMON LEADERBOARD (Team XP)"]
+    medals = ["🥇","🥈","🥉"]
+    for i, (name, uid, xp) in enumerate(rows):
+        prefix = medals[i] if i < 3 else f"{i+1}."
+        lines.append(f"{prefix} {name} — {xp} XP")
+    await update.message.reply_text("\n".join(lines))
+
+async def pstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Usage: /pstats <poke_id>")
+        return
+    try:
+        poke_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("Invalid id.")
+        return
+    p = database.get_pokemon_by_id(poke_id)
+    if not p or p["owner_id"] != update.effective_user.id:
+        await update.message.reply_text("Not your Pokemon.")
+        return
+    stats = database.calc_stats(p, p["level"])
+    moves = database.get_species_moves(p["species_id"], p["level"])
+    xp_need = database.xp_needed(p["level"])
+    nm = p["nickname"] or p["name"]
+    shiny_tag = "✨ SHINY " if p["shiny"] else ""
+    hp_status = "💀 FAINTED" if p["current_hp"] <= 0 else f"{hpbar(p['current_hp'], stats['hp'])} {p['current_hp']}/{stats['hp']}"
+    lines = [f"{shiny_tag}{nm}  (#{p['poke_id']})",
+        f"Species: {p['name']}   Type: {p['type1']}{'/'+p['type2'] if p['type2'] else ''}",
+        f"Level: {p['level']}/100   XP: {p['xp']}/{xp_need}",
+        f"HP: {hp_status}",
+        f"ATK: {stats['atk']}   DEF: {stats['def']}   SPD: {stats['spd']}", "", "Known moves:"]
+    for m in moves:
+        lines.append(f"  • {m['name']} ({m['type']}, pwr {m['power']})")
+    await update.message.reply_text("\n".join(lines))
+
+async def ppvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    target = None
+    if update.message.reply_to_message:
+        target = update.message.reply_to_message.from_user.id
+    if not target:
+        await update.message.reply_text("Reply to the player you want to challenge with /ppvp")
+        return
+    fighter, status = database.create_pvp_challenge(chat_id, user_id, target)
+    if status == "no_team":
+        await update.message.reply_text("You have no Pokemon in your team.")
+        return
+    await update.message.reply_text(f"⚔️ Pokemon PvP challenge sent! Opponent: use /ppvpaccept to fight with {fighter['name']} Lv.{fighter['level']}.")
+
+async def ppvpaccept(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    fighter, status = database.accept_pvp_challenge(chat_id, user_id)
+    if status == "no_team":
+        await update.message.reply_text("You have no Pokemon in your team.")
+        return
+    if status == "no_challenge":
+        await update.message.reply_text("No pending challenge for you.")
+        return
+    await update.message.reply_text(f"✅ Battle started with {fighter['name']}! Use /ppvpattack to fight, turn order by who challenged.")
+
+async def ppvpattack(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    result = database.pvp_attack(chat_id, user_id)
+    if not result:
+        await update.message.reply_text("You're not in an active Pokemon battle.")
+        return
+    if "error" in result:
+        if result["error"] == "not_your_turn":
+            await update.message.reply_text("Not your turn.")
+        else:
+            await update.message.reply_text("Your Pokemon knows no moves.")
+        return
+    eff = "It's super effective!" if result["mult"] > 1 else ("It's not very effective..." if result["mult"] < 1 else "")
+    lines = [f"{result['attacker_name']} used {result['move_name']}! {result['dmg']} dmg to {result['defender_name']}. {eff}",
+             f"{hpbar(result['new_hp'], result['max_hp'])} {result['new_hp']}/{result['max_hp']} HP"]
+    if result["fainted"]:
+        winner_bonus = 500
+        database.add_coins(result["winner_id"], winner_bonus)
+        lines.append(f"🏆 {result['defender_name']} fainted! Winner gets 💰{winner_bonus}.")
+        database.end_pvp_battle(result["battle_id"])
+    await update.message.reply_text("\n".join(lines))
+
+async def pcatch(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    if not context.args or context.args[0] not in BALL_PRICES:
+        await update.message.reply_text("Usage: /pcatch pokeball|greatball|masterball")
+        return
+    ball = context.args[0]
+    species_row, status = database.catch_pokemon(user_id, chat_id, ball)
+    if status == "no_wild":
+        await update.message.reply_text("No wild Pokemon here. Use /pwild first.")
+    elif status == "no_balls":
+        await update.message.reply_text(f"You have no {BALL_NAMES[ball]}s. Buy with /buyball")
+    elif status == "caught":
+        await update.message.reply_text(f"🎉 Gotcha! {species_row['name']} was caught! Check /mypokemon")
+    else:
+        await update.message.reply_text(f"💨 Oh no! The wild {species_row['name']} broke free!")
+
+
+async def pokemon_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    user_id = query.from_user.id
+    team_name = database.has_joined_pokemon(user_id)
+
+    if not team_name:
+        eligible, reasons = database.check_pokemon_eligibility(user_id)
+
+        if eligible:
+            text = (
+                "🐾 POKEMON\n\n"
+                "You're eligible! Send:\n"
+                "/pjoin <TeamName>\n\n"
+                "to create your team and start."
+            )
+        else:
+            text = (
+                "🐾 POKEMON\n\n"
+                "Not eligible yet:\n"
+                + "\n".join(f"• {r}" for r in reasons)
+            )
+
+    else:
+        text = (
+            f"🐾 POKEMON — Team \"{team_name}\"\n\n"
+            "/mypokemon - your Pokemon\n"
+            "/pteam - your battle team\n"
+            "/pteamset <id> <slot> - assign team\n"
+            "/pokeshop - buy Pokemon/balls\n"
+            "/buyball <type> <qty>\n"
+            "/pwild - find a wild Pokemon\n"
+            "/pbattle - fight it\n"
+            "/pcatch <ball> - catch it\n"
+            "/pheal - heal your team\n"
+            "/pstats <id> - detailed stats\n"
+            "/ppvp - challenge a player (reply)\n"
+            "/pleaderboard - top teams"
+        )
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "🔙 Back",
+                callback_data="back",
+            )
+        ]
+    ])
+
+    await query.edit_message_text(
+        text,
+        reply_markup=keyboard,
+    )
+
+    raise ApplicationHandlerStop()
+
+
+async def poke(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.reply_to_message:
+        await update.message.reply_text("Reply to someone's message with /poke to see their team.")
+        return
+    target = update.message.reply_to_message.from_user
+    rows = database.get_team(target.id)
+    if not rows:
+        await update.message.reply_text(f"{target.first_name} has no Pokemon team set.")
+        return
+    prot = database.get_protection_remaining(target.id)
+    tag = " 🛡️ PROTECTED" if prot > 0 else " ⚠️ VULNERABLE"
+    lines = [f"🐾 {target.first_name}'s TEAM{tag}"]
+    for r in rows:
+        nm = r["nickname"] or r["name"]
+        max_hp = database.calc_stats(r, r["level"])["hp"]
+        status = "💀 FAINTED" if r["current_hp"] <= 0 else f"{hpbar(r['current_hp'], max_hp)} {r['current_hp']}/{max_hp}"
+        lines.append(f"Slot {r['team_slot']}: {nm} Lv.{r['level']} {r['type1']}\n   {status}")
+    if prot == 0:
+        lines.append("\nReply to them with /psteal to attack their team.")
+    await update.message.reply_text("\n".join(lines))
+
+async def psteal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    if not database.has_joined_pokemon(user_id):
+        await update.message.reply_text("Join the Pokemon system first with /pjoin")
+        return
+    if not update.message.reply_to_message:
+        await update.message.reply_text("Reply to the player you want to steal from with /psteal")
+        return
+    target = update.message.reply_to_message.from_user
+    if target.id == user_id:
+        await update.message.reply_text("You can't steal from yourself.")
+        return
+    prot = database.get_protection_remaining(target.id)
+    if prot > 0:
+        mins = prot // 60
+        await update.message.reply_text(f"🛡️ {target.first_name} is protected for {mins}m more. Can't steal from them.")
+        return
+    target_poke, status = database.start_steal_battle(chat_id, user_id, target.id)
+    if status == "no_target_team":
+        await update.message.reply_text(f"{target.first_name} has no Pokemon team.")
+        return
+    if status == "no_my_team":
+        await update.message.reply_text("You have no Pokemon in your team. /pteamset first.")
+        return
+    if status == "target_all_fainted":
+        await update.message.reply_text(f"All of {target.first_name}'s Pokemon have fainted already.")
+        return
+    await update.message.reply_text(
+        f"⚔️ You're attacking {target.first_name}'s {target_poke['name']} (Lv.{target_poke['level']})!\n"
+        f"Use /pstealfight to attack, weaken it low then /pstealcatch <ball> to steal it."
+    )
+
+async def pstealfight(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    battle = database.get_steal_battle(chat_id, user_id)
+    if not battle:
+        await update.message.reply_text("No active steal battle. Reply to a target with /psteal first.")
+        return
+    my_team = database.get_team(user_id)
+    fighter = None
+    for p in my_team:
+        if p["current_hp"] > 0:
+            fighter = p
+            break
+    if not fighter:
+        await update.message.reply_text("💀 All your team Pokemon have fainted! Use /pheal.")
+        return
+    target_poke = database.get_pokemon_by_id(battle["target_poke_id"])
+    moves = database.get_species_moves(fighter["species_id"], fighter["level"])
+    if not moves:
+        await update.message.reply_text("Your Pokemon knows no moves yet.")
+        return
+
+    if not context.args:
+        lines = ["Choose your move (/pstealfight <number>):"]
+        for i, m in enumerate(moves, 1):
+            lines.append(f"{i}. {m['name']} ({m['type']}, pwr {m['power']})")
+        await update.message.reply_text("\n".join(lines))
+        return
+
+    try:
+        idx = int(context.args[0]) - 1
+        move = moves[idx]
+    except (ValueError, IndexError):
+        await update.message.reply_text("Invalid move number. Run /pstealfight to see options.")
+        return
+
+    my_stats = database.calc_stats(fighter, fighter["level"])
+    base_dmg = max(1, int(move["power"] * my_stats["atk"] / 50))
+    mult = database.type_multiplier(move["type"], target_poke["type1"], target_poke["type2"])
+    dmg = max(1, int(base_dmg * mult))
+    new_hp = database.damage_steal_target(chat_id, user_id, dmg)
+    eff = "It's super effective!" if mult > 1 else ("It's not very effective..." if mult < 1 else "")
+    lines = [f"{fighter['name']} used {move['name']}! {dmg} dmg. {eff}",
+             f"{hpbar(new_hp, battle['max_hp'])} {new_hp}/{battle['max_hp']} HP (target)"]
+
+    if new_hp <= 0:
+        lines.append(f"💀 {target_poke['name']} fainted and fled! It escaped before you could catch it.")
+        database.clear_steal_battle(chat_id, user_id)
+    else:
+        lines.append(f"Low enough? Try /pstealcatch pokeball|greatball|masterball to steal it.")
+    await update.message.reply_text("\n".join(lines))
+
+async def pstealcatch(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    if not context.args or context.args[0] not in BALL_PRICES:
+        await update.message.reply_text("Usage: /pstealcatch pokeball|greatball|masterball")
+        return
+    ball = context.args[0]
+    species_row, status = database.steal_pokemon(user_id, chat_id, ball)
+    if status == "no_battle":
+        await update.message.reply_text("No active steal battle. Reply to a target with /psteal first.")
+    elif status == "no_balls":
+        await update.message.reply_text(f"You have no {BALL_NAMES[ball]}s. Buy with /buyball")
+    elif status == "target_gone":
+        await update.message.reply_text("That Pokemon is no longer available.")
+    elif status == "stolen":
+        await update.message.reply_text(f"🎉 Stolen! {species_row['name']} is now on your team roster. Check /mypokemon")
+    else:
+        await update.message.reply_text(f"💨 {species_row['name']} broke free! It's still theirs.")
