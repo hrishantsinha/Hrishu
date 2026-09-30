@@ -1,0 +1,71 @@
+*{box-sizing:border-box;margin:0;-webkit-tap-highlight-color:transparent}
+body{font-family:system-ui,sans-serif;background:radial-gradient(circle at 50% 0,#2a1466,#0b0820 60%);color:#fff;min-height:100vh;overflow-x:hidden}
+canvas{position:fixed;inset:0;z-index:0;pointer-events:none}
+#app{position:relative;z-index:1;padding:18px 16px 110px;max-width:480px;margin:auto}
+.card{background:rgba(255,255,255,.07);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.13);border-radius:24px;padding:18px;margin-bottom:14px;animation:up .6s both}
+@keyframes up{from{opacity:0;transform:translateY(26px) scale(.96)}to{opacity:1;transform:none}}
+.hero{text-align:center}
+.name{font-size:22px;font-weight:800;margin-top:4px}
+.sub{opacity:.6;font-size:13px}
+.ring{position:relative;width:160px;height:160px;margin:4px auto 6px;filter:drop-shadow(0 0 18px #ff8a3d88)}
+.ring svg{transform:rotate(-90deg)}
+.ring .in{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.in small{opacity:.6;font-size:11px;letter-spacing:2px}
+.in b{font-size:44px;background:linear-gradient(#ffe07a,#ff7a3d);-webkit-background-clip:text;color:transparent}
+.bar{height:14px;background:rgba(255,255,255,.1);border-radius:9px;overflow:hidden;margin-top:8px}
+.fill{height:100%;width:0;border-radius:9px;background:linear-gradient(90deg,#ff3b5c,#ff8a5c);transition:width 1.4s cubic-bezier(.2,.9,.3,1);position:relative;overflow:hidden}
+.fill:after{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 30%,#fff8 50%,transparent 70%);animation:shine 2.2s infinite}
+@keyframes shine{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.tile{padding:14px;text-align:center;animation-delay:.2s}
+.tile i{font-style:normal;font-size:26px;display:block;animation:float 3s ease-in-out infinite}
+.tile b{font-size:22px;display:block;margin-top:2px}
+.tile span{opacity:.6;font-size:12px}
+@keyframes float{50%{transform:translateY(-5px)}}
+.nav{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);z-index:5;display:flex;gap:4px;padding:8px;background:rgba(20,12,50,.85);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,.15);border-radius:26px;width:calc(100% - 28px);max-width:452px}
+.nav button{flex:1;background:none;border:0;color:#fff;opacity:.5;font-size:11px;padding:8px 0;border-radius:18px;transition:.25s}
+.nav button i{font-style:normal;font-size:22px;display:block}
+.nav button.on{opacity:1;background:linear-gradient(135deg,#7b3cff,#ff5ca8);transform:translateY(-4px);box-shadow:0 8px 20px #7b3cff77}
+.soon{text-align:center;padding:50px 10px}
+.soon i{font-style:normal;font-size:60px;display:block;animation:float 2s infinite}
+.big{font-size:54px;font-weight:900;background:linear-gradient(#ffe07a,#ff5ca8);-webkit-background-clip:text;color:transparent}
+.row{display:flex;align-items:center;gap:12px;padding:12px 16px}
+.row .rk{font-size:22px;width:34px;text-align:center}
+.row .nm{flex:1;font-weight:700}
+.row small{display:block;opacity:.55;font-weight:400}
+.row.me{border-color:#ffe07a;box-shadow:0 0 18px #ffe07a55}
+.row.r1{background:linear-gradient(90deg,#ffd70033,#ffffff10)}
+.pw{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #ffffff14}
+.fill.gold{background:linear-gradient(90deg,#ffb83b,#ffe07a)}
+.fill.blue{background:linear-gradient(90deg,#3b8bff,#6be3ff)}
+.big{font-size:54px;font-weight:900;background:linear-gradient(#ffe07a,#ff5ca8);-webkit-background-clip:text;color:transparent}
+.row{display:flex;align-items:center;gap:12px;padding:12px 16px}
+.row .rk{font-size:22px;width:34px;text-align:center}
+.row .nm{flex:1;font-weight:700}
+.row small{display:block;opacity:.55;font-weight:400}
+.row.me{border-color:#ffe07a;box-shadow:0 0 18px #ffe07a55}
+.row.r1{background:linear-gradient(90deg,#ffd70033,#ffffff10)}
+.pw{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #ffffff14}
+.fill.gold{background:linear-gradient(90deg,#ffb83b,#ffe07a)}
+.fill.blue{background:linear-gradient(90deg,#3b8bff,#6be3ff)}
+.buy{border:0;color:#fff;font-weight:800;padding:10px 14px;border-radius:14px;background:linear-gradient(135deg,#7b3cff,#ff5ca8);box-shadow:0 6px 16px #7b3cff66;transition:.15s}
+.buy:active{transform:scale(.9)}
+.buy.off{opacity:.45;background:#ffffff22;box-shadow:none}
+.toast{position:fixed;top:18px;left:50%;transform:translateX(-50%);z-index:9;background:#1c1140;border:1px solid #ffffff30;padding:10px 18px;border-radius:16px;animation:up .3s both;white-space:nowrap}
+.pop{position:fixed;z-index:9;font-weight:900;font-size:22px;color:#ffe07a;pointer-events:none;animation:pop 1s forwards}
+@keyframes pop{to{transform:translateY(-80px);opacity:0}}
+.pup{border:0;color:#fff;font-weight:800;padding:10px 14px;border-radius:14px;background:linear-gradient(135deg,#00c98d,#00a3ff);box-shadow:0 6px 16px #00c98d55;transition:.15s}
+.pup:active{transform:scale(.9)}
+.pup.off{opacity:.45;background:#ffffff22;box-shadow:none}
+.seg{display:flex;gap:4px;margin-top:10px}
+.seg span{flex:1;height:10px;border-radius:5px;background:#ffffff18}
+.seg span.on{background:linear-gradient(90deg,#4dffb0,#00c98d);box-shadow:0 0 8px #00c98d88;animation:glow 1.6s infinite alternate}
+@keyframes glow{to{filter:brightness(1.35)}}
+.dv{display:flex;align-items:center;gap:12px;margin:28px 4px 16px;font-weight:800;letter-spacing:2px;font-size:13px}
+.dv:before,.dv:after{content:"";flex:1;height:2px;border-radius:2px;background:linear-gradient(90deg,transparent,#b06bff,#ff5ca8,transparent);box-shadow:0 0 10px #b06bff88}
+.pfc{padding:12px;text-align:center;display:flex;flex-direction:column;gap:8px}
+.pfc b{font-size:14px}
+.pfi{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:16px;background:#ffffff10;display:block}
+.pfb{border:0;color:#fff;font-weight:800;padding:10px 14px;border-radius:14px;background:linear-gradient(135deg,#7b3cff,#ff5ca8);box-shadow:0 6px 16px #7b3cff66;transition:.15s}
+.pfb:active{transform:scale(.9)}
+.pfb.off{opacity:.5;background:#ffffff22;box-shadow:none}

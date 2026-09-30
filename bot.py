@@ -1,3 +1,5 @@
+from telegram.ext import ConversationHandler
+from telegram.ext import ChatMemberHandler
 import asyncio
 import os
 import html
@@ -9,7 +11,7 @@ import time
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
+from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
 from database import init_pokemon_db
 from pokemon_commands import pokedex, pokeshop, buypoke, buyball, myballs, mypokemon, pteam, pteamset, pwild, pbattle, pcatch, pheal, pjoin, pleaderboard, pstats, ppvp, ppvpaccept, ppvpattack, pokemon_menu_callback, poke, psteal, pstealfight, pstealcatch
 from telegram.ext import (
@@ -54,6 +56,123 @@ if not BOT_TOKEN:
 
 if not OWNER_ID:
     raise ValueError("OWNER_ID is missing in .env")
+
+
+# FANCY_TEXT_GLOBAL_PATCH
+
+_FANCY_MAP = str.maketrans({
+    "a": "ᴀ", "b": "ʙ", "c": "ᴄ", "d": "ᴅ", "e": "ᴇ",
+    "f": "ꜰ", "g": "ɢ", "h": "ʜ", "i": "ɪ", "j": "ᴊ",
+    "k": "ᴋ", "l": "ʟ", "m": "ᴍ", "n": "ɴ", "o": "ᴏ",
+    "p": "ᴘ", "q": "q", "r": "ʀ", "s": "ꜱ", "t": "ᴛ",
+    "u": "ᴜ", "v": "ᴠ", "w": "ᴡ", "x": "x", "y": "ʏ",
+    "z": "ᴢ",
+    "A": "ᴀ", "B": "ʙ", "C": "ᴄ", "D": "ᴅ", "E": "ᴇ",
+    "F": "ꜰ", "G": "ɢ", "H": "ʜ", "I": "ɪ", "J": "ᴊ",
+    "K": "ᴋ", "L": "ʟ", "M": "ᴍ", "N": "ɴ", "O": "ᴏ",
+    "P": "ᴘ", "Q": "Q", "R": "ʀ", "S": "ꜱ", "T": "ᴛ",
+    "U": "ᴜ", "V": "ᴠ", "W": "ᴡ", "X": "X", "Y": "ʏ",
+    "Z": "ᴢ",
+})
+
+import re as _re
+
+_FANCY_TOKEN_RE = _re.compile(
+    r"(https?://\S+|/\w+|@\w+|&\w+;)"
+)
+_FANCY_TAG_RE = _re.compile(r"(<[^>]+>)")
+
+
+def fancy_text(text):
+    if not text:
+        return text
+
+    parts = _FANCY_TAG_RE.split(str(text))
+    output = []
+    protected = False
+
+    for part in parts:
+        if not part:
+            continue
+
+        if part.startswith("<") and part.endswith(">"):
+            tag = part.lower()
+
+            if tag.startswith("<code") or tag.startswith("<pre"):
+                protected = True
+            elif tag.startswith("</code") or tag.startswith("</pre"):
+                protected = False
+
+            output.append(part)
+            continue
+
+        if protected:
+            output.append(part)
+            continue
+
+        pieces = _FANCY_TOKEN_RE.split(part)
+
+        for piece in pieces:
+            if not piece:
+                continue
+
+            if _FANCY_TOKEN_RE.fullmatch(piece):
+                output.append(piece)
+            else:
+                output.append(piece.translate(_FANCY_MAP))
+
+    return "".join(output)
+
+
+# Patch normal bot messages.
+_original_send_message = Bot.send_message
+async def _fancy_send_message(self, *args, **kwargs):
+    if "text" in kwargs:
+        kwargs["text"] = fancy_text(kwargs["text"])
+    return await _original_send_message(self, *args, **kwargs)
+
+Bot.send_message = _fancy_send_message
+
+
+# Patch edited messages / menus.
+_original_edit_message_text = Bot.edit_message_text
+async def _fancy_edit_message_text(self, *args, **kwargs):
+    if "text" in kwargs:
+        kwargs["text"] = fancy_text(kwargs["text"])
+    return await _original_edit_message_text(self, *args, **kwargs)
+
+Bot.edit_message_text = _fancy_edit_message_text
+
+
+# Patch media captions.
+for _method_name in (
+    "send_photo",
+    "send_video",
+    "send_document",
+    "send_audio",
+    "send_animation",
+    "send_voice",
+):
+    _original_method = getattr(Bot, _method_name)
+
+    async def _fancy_media(self, *args, _original=_original_method, **kwargs):
+        if "caption" in kwargs:
+            kwargs["caption"] = fancy_text(kwargs["caption"])
+        return await _original(self, *args, **kwargs)
+
+    setattr(Bot, _method_name, _fancy_media)
+
+
+# Patch inline button labels.
+_original_button_init = InlineKeyboardButton.__init__
+
+def _fancy_button_init(self, text, *args, **kwargs):
+    text = fancy_text(text)
+    return _original_button_init(self, text, *args, **kwargs)
+
+InlineKeyboardButton.__init__ = _fancy_button_init
+
+# END FANCY_TEXT_GLOBAL_PATCH
 
 
 def get_admin_ids():
@@ -756,9 +875,9 @@ RPG:
 - /kill attacks another player.
 - /rob attempts to rob another player.
 - Players have HP.
-- Kill cooldown is 30 seconds.
+- Kill has no cooldown.
 - Fight cooldown is 30 seconds.
-- Rob cooldown is 60 seconds.
+- Rob has no cooldown.
 - XP and RPG statistics are stored for users.
 - Players have ranks based on XP.
 
@@ -1104,9 +1223,9 @@ WORK_REWARD_MIN = 200
 WORK_REWARD_MAX = 600
 WORK_COOLDOWN = 180
 
-KILL_COOLDOWN = 30
+KILL_COOLDOWN = 0
 FIGHT_COOLDOWN = 30
-ROB_COOLDOWN = 60
+ROB_COOLDOWN = 0
 
 SWORD_DURABILITY = 12
 SWORD_UPGRADE_BONUS = 0.30
@@ -1861,7 +1980,15 @@ def ensure_bot_user(bot_id):
 
 
 def get_random_bot_opponent():
-    bot_data = random.choice(BOT_PLAYERS)
+    available = [
+        b for b in BOT_PLAYERS
+        if get_active_battle(b["user_id"]) is None
+    ]
+
+    if not available:
+        return None
+
+    bot_data = random.choice(available)
     return ensure_bot_user(bot_data["user_id"])
 
 
@@ -4099,6 +4226,715 @@ async def bank_menu_callback(
     )
 
 
+async def admin_command(update, context):
+    if not update.effective_user or not update.message:
+        return
+
+    if update.effective_user.id not in ({OWNER_ID} | ADMIN_IDS):
+        await update.message.reply_text("🚫 <b>Owner/Admin only.</b>", parse_mode="HTML")
+        return
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "🎯 Start Guess Event",
+                callback_data="admin_start_event",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "📢 Send Message",
+                callback_data="admin_broadcast",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "👤 PFP Management",
+                callback_data="admin_pfp",
+            )
+        ],
+    ]
+
+    await update.message.reply_text(
+        "🛠 <b>Admin Tools</b>\n\n"
+        "Choose an admin action:",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+
+def ensure_pfp_db():
+    conn = sqlite3.connect("hrishu.db")
+    cur = conn.cursor()
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS hrishu_pfps (
+            pfp_id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            price INTEGER NOT NULL,
+            file_id TEXT NOT NULL,
+            media_type TEXT NOT NULL DEFAULT 'photo',
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+
+def is_admin_user(update):
+    return (
+        update.effective_user
+        and update.effective_user.id in ({OWNER_ID} | ADMIN_IDS)
+    )
+
+
+def valid_pfp_id(value):
+    value = (value or "").strip().lower()
+    return value in {f"pfp{i}" for i in range(1, 31)}
+
+
+async def admin_pfp_callback(update, context):
+    query = update.callback_query
+
+    if not query or not is_admin_user(update):
+        if query:
+            await query.answer("🚫 Owner/Admin only.", show_alert=True)
+        return
+
+    ensure_pfp_db()
+
+    data = query.data or ""
+
+    await query.answer()
+
+    # Main PFP management menu.
+    if data == "admin_pfp":
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "➕ Add PFP",
+                    callback_data="admin_pfp_add",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "✏️ Edit PFP",
+                    callback_data="admin_pfp_edit",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📋 View PFPs",
+                    callback_data="admin_pfp_view",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔙 Back",
+                    callback_data="admin_tools",
+                )
+            ],
+        ]
+
+        await query.edit_message_text(
+            "👤 <b>PFP Management</b>\n\n"
+            "Manage Hrishu profile pictures here.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return
+
+    # Start Add flow.
+    if data == "admin_pfp_add":
+        context.user_data["admin_pfp"] = {
+            "mode": "add",
+            "step": "id",
+        }
+
+        await query.edit_message_text(
+            "➕ <b>Add PFP</b>\n\n"
+            "Send the PFP ID first.\n\n"
+            "Use only: <code>pfp1</code> to <code>pfp30</code>\n\n"
+            "Example: <code>pfp1</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    # Show existing PFPs for editing.
+    if data == "admin_pfp_edit":
+        conn = sqlite3.connect("hrishu.db")
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT pfp_id, title, price
+            FROM hrishu_pfps
+            ORDER BY pfp_id
+        """)
+
+        rows = cur.fetchall()
+        conn.close()
+
+        if not rows:
+            await query.edit_message_text(
+                "✏️ <b>Edit PFP</b>\n\n"
+                "No PFPs have been added yet.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(
+                            "➕ Add PFP",
+                            callback_data="admin_pfp_add",
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "🔙 Back",
+                            callback_data="admin_pfp",
+                        )
+                    ],
+                ]),
+            )
+            return
+
+        keyboard = []
+
+        row = []
+
+        for item in rows:
+            row.append(
+                InlineKeyboardButton(
+                    f"{item['pfp_id']} • {item['title'][:16]}",
+                    callback_data=f"admin_pfp_select:{item['pfp_id']}",
+                )
+            )
+
+            if len(row) == 2:
+                keyboard.append(row)
+                row = []
+
+        if row:
+            keyboard.append(row)
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "🔙 Back",
+                callback_data="admin_pfp",
+            )
+        ])
+
+        await query.edit_message_text(
+            "✏️ <b>Select a PFP to edit:</b>",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return
+
+    # View all PFPs.
+    if data == "admin_pfp_view":
+        conn = sqlite3.connect("hrishu.db")
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT pfp_id, title, price
+            FROM hrishu_pfps
+            ORDER BY pfp_id
+        """)
+
+        rows = cur.fetchall()
+        conn.close()
+
+        lines = ["📋 <b>Hrishu PFP Collection</b>", ""]
+
+        existing = {
+            row["pfp_id"]: row
+            for row in rows
+        }
+
+        for i in range(1, 16):
+            pfp_id = f"pfp{i}"
+
+            if pfp_id in existing:
+                row = existing[pfp_id]
+                lines.append(
+                    f"👤 <code>{pfp_id}</code> — "
+                    f"<b>{row['title']}</b> • "
+                    f"💰 {row['price']:,}"
+                )
+            else:
+                lines.append(
+                    f"⬜ <code>{pfp_id}</code> — Empty"
+                )
+
+        keyboard = [[
+            InlineKeyboardButton(
+                "🔙 Back",
+                callback_data="admin_pfp",
+            )
+        ]]
+
+        await query.edit_message_text(
+            "\n".join(lines),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return
+
+    # Select PFP to edit.
+    if data.startswith("admin_pfp_select:"):
+        pfp_id = data.split(":", 1)[1]
+
+        conn = sqlite3.connect("hrishu.db")
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            SELECT pfp_id, title, price
+            FROM hrishu_pfps
+            WHERE pfp_id = ?
+            """,
+            (pfp_id,),
+        )
+
+        row = cur.fetchone()
+        conn.close()
+
+        if not row:
+            await query.edit_message_text(
+                "❌ PFP not found.",
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(
+                            "🔙 Back",
+                            callback_data="admin_pfp_edit",
+                        )
+                    ]
+                ]),
+            )
+            return
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "✏️ Edit Title",
+                    callback_data=f"admin_pfp_title:{pfp_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "💰 Edit Price",
+                    callback_data=f"admin_pfp_price:{pfp_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🖼️ Replace Picture",
+                    callback_data=f"admin_pfp_photo:{pfp_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔙 Back",
+                    callback_data="admin_pfp_edit",
+                )
+            ],
+        ]
+
+        await query.edit_message_text(
+            f"👤 <b>{pfp_id}</b>\n\n"
+            f"🏷️ Title: <b>{row['title']}</b>\n"
+            f"💰 Price: <b>{row['price']:,}</b> coins\n\n"
+            "Choose what you want to edit:",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return
+
+    # Edit title.
+    if data.startswith("admin_pfp_title:"):
+        pfp_id = data.split(":", 1)[1]
+
+        context.user_data["admin_pfp"] = {
+            "mode": "edit",
+            "step": "title",
+            "pfp_id": pfp_id,
+        }
+
+        await query.edit_message_text(
+            f"✏️ <b>Edit {pfp_id}</b>\n\n"
+            "Send the new PFP title.",
+            parse_mode="HTML",
+        )
+        return
+
+    # Edit price.
+    if data.startswith("admin_pfp_price:"):
+        pfp_id = data.split(":", 1)[1]
+
+        context.user_data["admin_pfp"] = {
+            "mode": "edit",
+            "step": "price",
+            "pfp_id": pfp_id,
+        }
+
+        await query.edit_message_text(
+            f"💰 <b>Edit {pfp_id} Price</b>\n\n"
+            "Send the new price in coins.\n\n"
+            "Example: <code>5000</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    # Replace picture.
+    if data.startswith("admin_pfp_photo:"):
+        pfp_id = data.split(":", 1)[1]
+
+        context.user_data["admin_pfp"] = {
+            "mode": "edit",
+            "step": "photo",
+            "pfp_id": pfp_id,
+        }
+
+        await query.edit_message_text(
+            f"🖼️ <b>Replace {pfp_id} Picture</b>\n\n"
+            "Send the new PFP picture now.",
+            parse_mode="HTML",
+        )
+        return
+
+
+async def handle_admin_pfp_message(update, context):
+    state = context.user_data.get("admin_pfp")
+
+    if not state:
+        return
+
+    if not is_admin_user(update):
+        context.user_data.pop("admin_pfp", None)
+        return
+
+    ensure_pfp_db()
+
+    message = update.message
+
+    if not message:
+        return
+
+    # Allow cancelling the flow.
+    if message.text and message.text.strip().lower() == "/cancel":
+        context.user_data.pop("admin_pfp", None)
+
+        await message.reply_text(
+            "✅ PFP operation cancelled."
+        )
+        return
+
+    step = state["step"]
+    mode = state["mode"]
+
+    # --------------------------------------------------------
+    # ADD: ID
+    # --------------------------------------------------------
+    if mode == "add" and step == "id":
+        if not message.text:
+            await message.reply_text(
+                "❌ Send the PFP ID as text, like <code>pfp1</code>.",
+                parse_mode="HTML",
+            )
+            return
+
+        pfp_id = message.text.strip().lower()
+
+        if not valid_pfp_id(pfp_id):
+            await message.reply_text(
+                "❌ Invalid PFP ID.\n\n"
+                "Use <code>pfp1</code> to <code>pfp30</code>.",
+                parse_mode="HTML",
+            )
+            return
+
+        conn = sqlite3.connect("hrishu.db")
+        cur = conn.cursor()
+
+        cur.execute(
+            "SELECT 1 FROM hrishu_pfps WHERE pfp_id = ?",
+            (pfp_id,),
+        )
+
+        exists = cur.fetchone()
+        conn.close()
+
+        if exists:
+            await message.reply_text(
+                f"❌ <code>{pfp_id}</code> already exists.\n"
+                "Use Edit PFP instead.",
+                parse_mode="HTML",
+            )
+            return
+
+        state["pfp_id"] = pfp_id
+        state["step"] = "title"
+
+        await message.reply_text(
+            f"✅ PFP ID: <code>{pfp_id}</code>\n\n"
+            "Now send the <b>PFP title</b>.",
+            parse_mode="HTML",
+        )
+        return
+
+    # --------------------------------------------------------
+    # ADD: TITLE
+    # --------------------------------------------------------
+    if mode == "add" and step == "title":
+        if not message.text or not message.text.strip():
+            await message.reply_text(
+                "❌ Send a valid PFP title."
+            )
+            return
+
+        state["title"] = message.text.strip()
+        state["step"] = "price"
+
+        await message.reply_text(
+            "✅ Title saved.\n\n"
+            "Now send the <b>price in coins</b>.\n\n"
+            "Example: <code>5000</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    # --------------------------------------------------------
+    # ADD: PRICE
+    # --------------------------------------------------------
+    if mode == "add" and step == "price":
+        if not message.text:
+            await message.reply_text(
+                "❌ Send the price as a number."
+            )
+            return
+
+        try:
+            price = int(message.text.strip())
+        except ValueError:
+            await message.reply_text(
+                "❌ Price must be a number."
+            )
+            return
+
+        if price <= 0:
+            await message.reply_text(
+                "❌ Price must be greater than 0."
+            )
+            return
+
+        state["price"] = price
+        state["step"] = "photo"
+
+        await message.reply_text(
+            "✅ Price saved.\n\n"
+            "Now <b>send the PFP picture</b>.",
+            parse_mode="HTML",
+        )
+        return
+
+    # --------------------------------------------------------
+    # ADD: PHOTO / VIDEO
+    # --------------------------------------------------------
+    if mode == "add" and step == "photo":
+        if message.photo:
+            file_id = message.photo[-1].file_id
+            media_type = "photo"
+        elif message.video:
+            file_id = message.video.file_id
+            media_type = "video"
+        else:
+            await message.reply_text(
+                "❌ Please send a photo or video."
+            )
+            return
+
+        now = int(time.time())
+
+        conn = sqlite3.connect("hrishu.db")
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            INSERT INTO hrishu_pfps (
+                pfp_id,
+                title,
+                price,
+                file_id,
+                created_at,
+                updated_at,
+                media_type
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                state["pfp_id"],
+                state["title"],
+                state["price"],
+                file_id,
+                now,
+                now,
+                media_type,
+            ),
+        )
+
+        conn.commit()
+        conn.close()
+
+        await message.reply_text(
+            "✅ <b>PFP added successfully!</b>\n\n"
+            f"👤 ID: <code>{state['pfp_id']}</code>\n"
+            f"🏷️ Title: <b>{state['title']}</b>\n"
+            f"💰 Price: <b>{state['price']:,}</b> coins",
+            parse_mode="HTML",
+        )
+
+        context.user_data.pop("admin_pfp", None)
+        return
+
+    # --------------------------------------------------------
+    # EDIT: TITLE
+    # --------------------------------------------------------
+    if mode == "edit" and step == "title":
+        if not message.text or not message.text.strip():
+            await message.reply_text(
+                "❌ Send a valid title."
+            )
+            return
+
+        conn = sqlite3.connect("hrishu.db")
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            UPDATE hrishu_pfps
+            SET title = ?, updated_at = ?
+            WHERE pfp_id = ?
+            """,
+            (
+                message.text.strip(),
+                int(time.time()),
+                state["pfp_id"],
+            ),
+        )
+
+        conn.commit()
+        conn.close()
+
+        await message.reply_text(
+            f"✅ Title updated for <code>{state['pfp_id']}</code>.",
+            parse_mode="HTML",
+        )
+
+        context.user_data.pop("admin_pfp", None)
+        return
+
+    # --------------------------------------------------------
+    # EDIT: PRICE
+    # --------------------------------------------------------
+    if mode == "edit" and step == "price":
+        if not message.text:
+            await message.reply_text(
+                "❌ Send the price as a number."
+            )
+            return
+
+        try:
+            price = int(message.text.strip())
+        except ValueError:
+            await message.reply_text(
+                "❌ Price must be a number."
+            )
+            return
+
+        if price <= 0:
+            await message.reply_text(
+                "❌ Price must be greater than 0."
+            )
+            return
+
+        conn = sqlite3.connect("hrishu.db")
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            UPDATE hrishu_pfps
+            SET price = ?, updated_at = ?
+            WHERE pfp_id = ?
+            """,
+            (
+                price,
+                int(time.time()),
+                state["pfp_id"],
+            ),
+        )
+
+        conn.commit()
+        conn.close()
+
+        await message.reply_text(
+            f"✅ Price updated for <code>{state['pfp_id']}</code>.\n"
+            f"💰 New price: <b>{price:,}</b> coins",
+            parse_mode="HTML",
+        )
+
+        context.user_data.pop("admin_pfp", None)
+        return
+
+    # --------------------------------------------------------
+    # EDIT: PHOTO / VIDEO
+    # --------------------------------------------------------
+    if mode == "edit" and step == "photo":
+        if message.photo:
+            file_id = message.photo[-1].file_id
+            media_type = "photo"
+        elif message.video:
+            file_id = message.video.file_id
+            media_type = "video"
+        else:
+            await message.reply_text(
+                "❌ Please send a photo or video."
+            )
+            return
+
+        conn = sqlite3.connect("hrishu.db")
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            UPDATE hrishu_pfps
+            SET file_id = ?, media_type = ?, updated_at = ?
+            WHERE pfp_id = ?
+            """,
+            (
+                file_id,
+                media_type,
+                int(time.time()),
+                state["pfp_id"],
+            ),
+        )
+
+        conn.commit()
+        conn.close()
+
+        await message.reply_text(
+            f"✅ Picture replaced for <code>{state['pfp_id']}</code>.",
+            parse_mode="HTML",
+        )
+
+        context.user_data.pop("admin_pfp", None)
+        return
+
+
 async def admin_tools_menu(update, context):
     query = update.callback_query
 
@@ -4117,6 +4953,10 @@ async def admin_tools_menu(update, context):
         [InlineKeyboardButton(
             "📢 Send Message",
             callback_data="admin_broadcast",
+        )],
+        [InlineKeyboardButton(
+            "👤 PFP Management",
+            callback_data="admin_pfp",
         )],
         [InlineKeyboardButton(
             "🔙 Back",
@@ -4387,91 +5227,181 @@ async def power_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+
+async def rich_leaderboard_callback(update, context):
+    query = update.callback_query
+
+    if not query:
+        return
+
+    import sqlite3
+
+    conn = sqlite3.connect("hrishu.db")
+    conn.row_factory = sqlite3.Row
+
+    rows = conn.execute("""
+        SELECT
+            hrishu_id,
+            first_name,
+            username,
+            coins,
+            bank,
+            (coins + bank) AS total_money
+        FROM users
+        WHERE hrishu_id != '69988'
+        ORDER BY total_money DESC
+        LIMIT 12
+    """).fetchall()
+
+    conn.close()
+
+    if not rows:
+        await query.answer("No players yet.")
+        return
+
+    text = (
+        "💰 <b>HRISHU RICHEST PLAYERS</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "        💎 <b>TOP 12</b> 💎\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+    )
+
+    medals = ["🥇", "🥈", "🥉"]
+
+    for index, player in enumerate(rows, 1):
+        name = (
+            player["first_name"]
+            or player["username"]
+            or "Unknown"
+        )
+
+        total = player["total_money"]
+
+        if index <= 3:
+            prefix = medals[index - 1]
+        else:
+            prefix = "💰"
+
+        text += (
+            f"{prefix} <b>#{index}</b> {name}\n"
+            f"     💎 <b>{total:,} coins</b>\n\n"
+        )
+
+    text += (
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "💰 <b>Wallet + Bank</b>\n"
+        "🚫 ID 69988 excluded"
+    )
+
+    await query.answer()
+
+    await query.edit_message_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "🏆 XP Leaderboard",
+                    callback_data="back_xp_leaderboard",
+                )
+            ]
+        ]),
+    )
+
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
 
-    if query.data == "main_menu":
-        user = await ensure_user(update)
+    if query and (query.data or "").startswith("pfpshop:"):
+        return
 
-        text = (
-            f"👋 <b>Welcome to Hrishu, {mention(user)}!</b>\n\n"
-            f"🎮 <b>Your Telegram RPG & Economy Bot</b>\n"
-            f"⚔️ Fight • 💰 Earn • 🆙 Level Up • 🌌 Reach Legend\n\n"
-            f"🆔 <b>Hrishu ID:</b> <code>{user['hrishu_id']}</code>\n"
-            f"💰 <b>Coins:</b> {user['coins']}\n"
-            f"⭐ <b>XP:</b> {user['xp']}\n"
-            f"🏆 <b>Rank:</b> {get_rank(user['xp'])}\n"
-            f"❤️ <b>HP:</b> {user['hp']}/{user['max_hp']}\n\n"
-            f"👇 <b>Choose an option below:</b>"
-        )
+    # Leaderboard callbacks are handled by their dedicated handlers.
+    if query and query.data in ("rich_leaderboard", "back_xp_leaderboard"):
+        return
 
-        keyboard = [
-            [InlineKeyboardButton(
-                "➕ Add Me to Group",
-                url="https://t.me/aapkahrishubot?startgroup=true"
-            )],
+    # SUPPORT_SINGLE_MENU_START
+
+    if not query:
+        return
+
+    data = query.data or ""
+
+    # --------------------------------------------------------
+    # MAIN MENU SUPPORT
+    # --------------------------------------------------------
+    if data == "gamesupport_menu":
+        if not query.message:
+            return
+
+        if query.message.chat.type != "private":
+            await query.answer(
+                "Game support is available in private chat only.",
+                show_alert=True,
+            )
+            return
+
+        await query.answer()
+
+        context.user_data.pop("gamesupport", None)
+        context.user_data["gamesupport"] = {
+            "step": "category",
+        }
+
+        support_keyboard = [
             [
-                InlineKeyboardButton("👤 Profile", callback_data="profile"),
-                InlineKeyboardButton("🆔 My ID", callback_data="myid")
-            ],
-            [
-                InlineKeyboardButton("⚡ Powers", callback_data="power_menu")
-            ],
-            [
-                InlineKeyboardButton("📊 Level", callback_data="level"),
-                InlineKeyboardButton("🏆 Leaderboard", callback_data="leaderboard")
-            ],
-            [
-                InlineKeyboardButton("💰 Economy", callback_data="economy"),
-                InlineKeyboardButton("⚔️ RPG", callback_data="rpg")
-            ],
-            [
-                InlineKeyboardButton("🛒 Shop", callback_data="shop"),
-                InlineKeyboardButton("🎒 Inventory", callback_data="inventory")
+                InlineKeyboardButton(
+                    "💰 Financial Issue",
+                    callback_data="gs_financial",
+                ),
+                InlineKeyboardButton(
+                    "🎮 Game Concern",
+                    callback_data="gs_game",
+                ),
             ],
             [
                 InlineKeyboardButton(
-                    "🏦 Manage Bank Accounts",
-                    callback_data="bank_menu",
-                )
+                    "📜 Rule Concern",
+                    callback_data="gs_rule",
+                ),
+                InlineKeyboardButton(
+                    "🐛 Report a Glitch",
+                    callback_data="gs_glitch",
+                ),
             ],
             [
                 InlineKeyboardButton(
-                    "🐾 Pokemon",
-                    callback_data="pokemon_menu",
-                )
+                    "🚨 Report a Player",
+                    callback_data="gs_player",
+                ),
             ],
             [
                 InlineKeyboardButton(
-                    "💎 Premium",
-                    callback_data="premium",
-                )
+                    "📝 Other Issue",
+                    callback_data="gs_other",
+                ),
             ],
             [
                 InlineKeyboardButton(
-                    "📜 Commands",
-                    callback_data="commands",
-                )
+                    "🔙 Back",
+                    callback_data="back",
+                ),
             ],
         ]
 
-        if update.effective_user and update.effective_user.id in ({OWNER_ID} | ADMIN_IDS):
-            keyboard.insert(
-                -1,
-                [InlineKeyboardButton(
-                    "🛠️ Admin Tools",
-                    callback_data="admin_tools",
-                )]
-            )
-
         await query.edit_message_text(
-            text,
+            "🎮 <b>Hrishu Game Support</b>\n\n"
+            "What do you need help with?\n\n"
+            "Select a category below:",
             parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(keyboard),
+            reply_markup=InlineKeyboardMarkup(support_keyboard),
         )
-
-        await query.answer()
         return
+
+    # --------------------------------------------------------
+    # ALL NORMAL "BACK" BUTTONS RETURN TO THIS ONE MAIN MENU
+    # --------------------------------------------------------
+
+    # SUPPORT_SINGLE_MENU_END
 
     # ========================================================
     # POWER SYSTEM
@@ -5350,17 +6280,48 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if lock.locked():
                 lock.release()
 
+
+    back_keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 Back", callback_data="back")]
+    ])
+
+    # --------------------------------------------------------
+    # NORMAL BACK -> CURRENT /START MENU
+    # --------------------------------------------------------
     if query.data == "back":
+        await query.answer()
+
+        player_name = (
+            update.effective_user.first_name
+            if update.effective_user and update.effective_user.first_name
+            else "Player"
+        )
+
+        protection = protection_remaining(user)
+        protection_text = (
+            protection_duration_text(protection)
+            if protection > 0
+            else "ɴᴏɴᴇ"
+        )
+
         text = (
-            f"👋 <b>Welcome to Hrishu, {mention(user)}!</b>\n\n"
-            f"🎮 <b>Your Telegram RPG & Economy Bot</b>\n"
-            f"⚔️ Fight • 💰 Earn • 🆙 Level Up • 🌌 Reach Legend\n\n"
-            f"🆔 <b>Hrishu ID:</b> <code>{user['hrishu_id']}</code>\n"
-            f"💰 <b>Coins:</b> {user['coins']}\n"
-            f"⭐ <b>XP:</b> {user['xp']}\n"
-            f"🏆 <b>Rank:</b> {get_rank(user['xp'])}\n"
-            f"❤️ <b>HP:</b> {user['hp']}/{user['max_hp']}\n\n"
-            f"👇 <b>Choose an option below:</b>"
+            f"💙 ʜɪᴇᴇᴇᴇᴇ {player_name}! 👋\n"
+            f"ɪ'ᴍ <b>ʜʀɪѕʜᴜ</b> — ʏᴏᴜʀ ɢᴀᴍɪɴɢ ʙᴏʏ 🎮\n"
+            f"ɪ'ᴍ ʜᴇʀᴇ ᴛᴏ ʙʀɪɴɢ ɢᴀᴍᴇꜱ & ʟᴏᴛꜱ ᴏꜰ ꜰᴜɴ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ! 💙\n\n"
+            f"📊 <b>ʏᴏᴜʀ ꜱᴛᴀᴛꜱ:</b>\n"
+            f"💰 ʙᴀʟᴀɴᴄᴇ: {user['coins']}\n"
+            f"🏆 ʀᴀɴᴋ: {get_rank(user['xp'])}\n"
+            f"⭐ xᴘ: {user['xp']}\n"
+            f"🎚️ ʟᴇᴠᴇʟ: {user['level']}\n"
+            f"🛡️ ᴘʀᴏᴛᴇᴄᴛɪᴏɴ: {protection_text}\n\n"
+            f"🎮 <b>ʜᴏᴡ ᴛᴏ ᴘʟᴀʏ?</b>\n"
+            f"💰 /bal - ᴄʜᴇᴄᴋ ʏᴏᴜʀ ʙᴀʟᴀɴᴄᴇ\n"
+            f"👤 /pfp - ᴄʜᴇᴄᴋ ʏᴏᴜʀ ᴘꜰᴘ\n"
+            f"🎁 /daily - ɢᴇᴛ ꜰʀᴇᴇ ᴄᴏɪɴꜱ\n"
+            f"🛡️ /protect - ꜱᴀᴠᴇ ʏᴏᴜʀꜱᴇʟꜰ\n"
+            f"⚔️ /kill - ᴋɪʟʟ ᴏᴛʜᴇʀ ᴘʟᴀʏᴇʀꜱ\n"
+            f"⚡ /power - ᴜᴘɢʀᴀᴅᴇ ʏᴏᴜʀ ᴘᴏᴡᴇʀꜱ\n\n"
+            f"👇 ᴄʜᴏᴏѕᴇ ᴀɴ ᴏᴘᴛɪᴏɴ ʙᴇʟᴏᴡ:"
         )
 
         keyboard = [
@@ -5372,59 +6333,35 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ],
             [
                 InlineKeyboardButton("👤 Profile", callback_data="profile"),
-                InlineKeyboardButton("🆔 My ID", callback_data="myid"),
-            ],
-            [
-                InlineKeyboardButton("⚡ Powers", callback_data="power_menu"),
-            ],
-            [
-                InlineKeyboardButton("📊 Level", callback_data="level"),
-                InlineKeyboardButton("🏆 Leaderboard", callback_data="leaderboard"),
-            ],
-            [
-                InlineKeyboardButton("💰 Economy", callback_data="economy"),
-                InlineKeyboardButton("⚔️ RPG", callback_data="rpg"),
-            ],
-            [
-                InlineKeyboardButton("🛒 Shop", callback_data="shop"),
-                InlineKeyboardButton("🎒 Inventory", callback_data="inventory"),
-            ],
-            [
                 InlineKeyboardButton(
-                    "🏦 Manage Bank Accounts",
-                    callback_data="bank_menu",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🐾 Pokemon",
-                    callback_data="pokemon_menu",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "💎 Premium",
-                    callback_data="premium",
-                )
+                    "✨ Features",
+                    callback_data="features_menu",
+                ),
             ],
             [
                 InlineKeyboardButton(
                     "📜 Commands",
                     callback_data="commands",
-                )
+                ),
+                InlineKeyboardButton(
+                    "🎮 Support",
+                    callback_data="gamesupport_menu",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    "💎 Premium",
+                    callback_data="premium",
+                    style="primary",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    "🏦 Manage Bank Account",
+                    callback_data="bank_menu",
+                ),
             ],
         ]
-
-        if update.effective_user and update.effective_user.id in ({OWNER_ID} | ADMIN_IDS):
-            keyboard.insert(
-                -1,
-                [
-                    InlineKeyboardButton(
-                        "🛠️ Admin Tools",
-                        callback_data="admin_tools",
-                    )
-                ],
-            )
 
         await query.edit_message_text(
             text,
@@ -5432,10 +6369,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
         return
-
-    back_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔙 Back", callback_data="back")]
-    ])
 
     if query.data == "bank_create":
         if not update.effective_chat or update.effective_chat.type != "private":
@@ -5879,7 +6812,83 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Use /help to see all available Hrishu commands."
         )
 
+    elif query.data == "features_menu":
+        text = (
+            "✨ <b>Hrishu Features</b>\n\n"
+            "Choose a feature below:"
+        )
+
+    elif query.data == "gamesupport_menu":
+        if not query.message or query.message.chat.type != "private":
+            await query.answer(
+                "Game support is available in private chat only.",
+                show_alert=True,
+            )
+            return
+
+        await query.answer()
+
+        context.user_data.pop("gamesupport", None)
+        context.user_data["gamesupport"] = {
+            "step": "category",
+        }
+
+        support_keyboard = [
+            [
+                InlineKeyboardButton("💰 Financial Issue", callback_data="gs_financial"),
+                InlineKeyboardButton("🎮 Game Concern", callback_data="gs_game"),
+            ],
+            [
+                InlineKeyboardButton("📜 Rule Concern", callback_data="gs_rule"),
+                InlineKeyboardButton("🐛 Report a Glitch", callback_data="gs_glitch"),
+            ],
+            [
+                InlineKeyboardButton("🚨 Report a Player", callback_data="gs_player"),
+            ],
+            [
+                InlineKeyboardButton("📝 Other Issue", callback_data="gs_other"),
+            ],
+            [
+                InlineKeyboardButton("🔙 Back", callback_data="back"),
+            ],
+        ]
+
+        await query.edit_message_text(
+            "🎮 <b>Hrishu Game Support</b>\n\n"
+            "What do you need help with?\n\n"
+            "Select a category below:",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(support_keyboard),
+        )
+        return
+
+    elif query.data == "gamesupport_menu":
+        await query.answer()
+        context.user_data["gamesupport"] = {"step": "category"}
+
+        kb = [
+            [InlineKeyboardButton("💰 Financial Issue", callback_data="gs_financial"),
+             InlineKeyboardButton("🎮 Game Concern", callback_data="gs_game")],
+            [InlineKeyboardButton("📜 Rule Concern", callback_data="gs_rule"),
+             InlineKeyboardButton("🐛 Report a Glitch", callback_data="gs_glitch")],
+            [InlineKeyboardButton("🚨 Report a Player", callback_data="gs_player")],
+            [InlineKeyboardButton("📝 Other Issue", callback_data="gs_other")],
+            [InlineKeyboardButton("🔙 Back", callback_data="back")],
+        ]
+
+        await query.edit_message_text(
+            "🎮 <b>Hrishu Game Support</b>\n\n"
+            "What do you need help with?\n\n"
+            "Select a category below:",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(kb),
+        )
+        return
+
     elif not query.data.startswith("bank_"):
+        if (query.data or "").startswith("gs_"):
+            return
+
         text = "❓ Unknown button."
 
     if query.data == "bank_menu":
@@ -5894,6 +6903,29 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔙 Back", callback_data="bank_manage")]
         ])
+    elif query.data == "features_menu":
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("🆔 My ID", callback_data="myid"),
+                InlineKeyboardButton("⚡ Powers", callback_data="power_menu"),
+            ],
+            [
+                InlineKeyboardButton("📊 Level", callback_data="level"),
+                InlineKeyboardButton("🏆 Leaderboard", callback_data="leaderboard"),
+            ],
+            [
+                InlineKeyboardButton("💰 Economy", callback_data="economy"),
+                InlineKeyboardButton("⚔️ RPG", callback_data="rpg"),
+            ],
+            [
+                InlineKeyboardButton("🛒 Shop", callback_data="shop"),
+                InlineKeyboardButton("🎒 Inventory", callback_data="inventory"),
+            ],
+            [
+                InlineKeyboardButton("🔙 Back", callback_data="back"),
+            ],
+        ])
+
     else:
         keyboard = back_keyboard
 
@@ -5913,95 +6945,118 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await ensure_user(update)
 
-    text = """
-🤖 *HRISHU COMMANDS*
+    text = """<b>🤖 HRISHU COMMANDS</b>
 
-👤 PROFILE
-/profile
-/id
-/level
-/inventory
+<b>👤 PROFILE</b>
+/profile - View your profile
+/id - Show your ID
+/level - Check your level
+/inventory - View inventory
 
-💰 ECONOMY
-/bal
-/daily
-/work
-/give
-/deposit
-/withdraw
+<b>💰 ECONOMY</b>
+/bank - Open bank
+/bal - Check balance
+/protect - Get protection
+/daily - Claim daily reward
+/work - Work for coins
+/give - Give coins
+/deposit - Deposit coins
+/withdraw - Withdraw coins
 
-🎮 GAMES
-/coinflip
-/dice
+<b>🎮 GAMES</b>
+/coinflip - Flip a coin
+/dice - Roll dice
 
-⚔️ RPG
-/heal
-/fight
-/kill
-/rob
-/power
+<b>⚔️ RPG</b>
+/heal - Heal yourself
+/revive - Revive yourself
+/attack - Attack during a fight
+/power - Upgrade powers
+/use - Use an item
+/potion - Use potion
+/shield - Use shield
+/sword - Use sword
+/upgradesword - Upgrade sword
+/fight - Challenge a player
+/kill - Kill a player
+/rob - Rob a player
 
-🐾 POKEMON
-/pokedex - list all Pokemon species
-/pokeshop - buy Pokemon & balls list
-/buypoke <id> - buy a Pokemon
-/buyball <type> <qty> - buy pokeball/greatball/masterball
-/myballs - check your ball inventory
-/mypokemon - list your owned Pokemon
-/pteam - view your active 6-slot team
-/pteamset <poke_id> <slot> - assign a Pokemon to your team
-/pwild - spawn a wild Pokemon in this chat
-/pbattle - attack the wild Pokemon with your team
-/pcatch <type> - throw a ball to catch the wild Pokemon
-/pheal - fully heal your team (💰300)
+<b>🐾 POKEMON</b>
+/pokedex - View Pokemon Pokedex
+/pokeshop - Open Pokemon shop
+/buypoke - Buy Pokemon
+/buyball - Buy Pokeballs
+/myballs - View your Pokeballs
+/mypokemon - View your Pokemon
+/pteam - View your Pokemon team
+/pteamset - Set your Pokemon team
+/pwild - Find wild Pokemon
+/pbattle - Battle wild Pokemon
+/pcatch - Catch wild Pokemon
+/pheal - Heal Pokemon
+/pjoin - Join Pokemon
+/pleaderboard - Pokemon leaderboard
+/pstats - Pokemon stats
+/ppvp - Pokemon PvP
+/ppvpaccept - Accept Pokemon PvP
+/ppvpattack - Attack in Pokemon PvP
+/poke - View someone's Pokemon
+/psteal - Steal Pokemon
+/pstealfight - Fight during Pokemon steal
+/pstealcatch - Catch stolen Pokemon
 
-🛒 SHOP
-/shop
-/buy
+<b>🛒 SHOP</b>
+/shop - Open shop
+/buy - Buy from shop
 
-🏆 LEADERBOARD
-/leaderboard
+<b>🏆 LEADERBOARD</b>
+/leaderboard - View leaderboard
 
-👑 OWNER
-/setsecondowner
-/removesecondowner
+<b>👑 STAFF</b>
+/staff - Staff panel
+/stafflist - View staff
+/promote - Promote a user
+/promote2 - Promote to higher staff
+/setsecondowner - Set second owner
+/removesecondowner - Remove second owner
+/demote - Demote a user
+/givemoney - Give money
+/take - Take money
+/setmoney - Set money
 
-🥈 SECOND OWNER
-/promote
-/demote
+<b>🛡️ MODERATION</b>
+/warn - Warn a user
+/warnings - View warnings
+/mute - Mute a user
+/unmute - Unmute a user
+/ban - Ban a user
+/unban - Unban a user
+/rules - View group rules
 
-🛡️ ADMIN
-/staff
-/stafflist
-/givemoney
-/take
-/setmoney
+<b>🎮 SUPPORT</b>
+/gamesupport - Open game support
+/paysupport - Payment support
 
-🛡️ MODERATION
-/warn
-/warnings
-/mute
-/unmute
-/ban
-/unban
+<b>🤖 AI</b>
+/ask - Ask Hrishu AI
+/forgetai - Forget AI memory
+/teach - Teach Hrishu
 
-🤖 AI CHAT
-/ask <message>
-/forgetai
-
-👋 Other
-/rules
+<b>🎯 OTHER</b>
+/start - Start Hrishu
+/g - Event guessing game
+/seteventimage - Set event image
+/eventnow - Show current event
+/stars - Check Telegram Stars
+/terms - Terms and conditions
+/help - Show all commands
 """
 
     await update.message.reply_text(
         text,
-        parse_mode="Markdown",
+        parse_mode="HTML",
     )
 
-
-# ============================================================
-# ID
-# ============================================================
 
 async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = await ensure_user(update)
@@ -6798,7 +7853,42 @@ async def work_game_message(
 # ============================================================
 
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = await ensure_user(update)
+    # If /profile is used as a reply, show the replied user's profile.
+    # Otherwise, show the command sender's profile.
+    if (
+        update.message
+        and update.message.reply_to_message
+        and update.message.reply_to_message.from_user
+    ):
+        target_user = update.message.reply_to_message.from_user
+
+        # Make sure the replied user exists in Hrishu.
+        target_update = update
+        original_user = update.effective_user
+
+        # Temporarily use the target Telegram user ID to fetch their database record.
+        import sqlite3
+
+        conn = sqlite3.connect("hrishu.db")
+        conn.row_factory = sqlite3.Row
+
+        target = conn.execute(
+            "SELECT * FROM users WHERE user_id = ?",
+            (target_user.id,)
+        ).fetchone()
+
+        conn.close()
+
+        if not target:
+            await update.message.reply_text(
+                "❌ This player hasn't started Hrishu yet."
+            )
+            return
+
+        user = target
+
+    else:
+        user = await ensure_user(update)
 
     current_rank, next_rank = get_rank_info(user["xp"])
 
@@ -6884,6 +7974,7 @@ async def leaderboard(
         """
         SELECT first_name, username, xp, level
         FROM users
+        WHERE hrishu_id != '69988'
         ORDER BY xp DESC
         LIMIT 12
         """
@@ -6950,6 +8041,14 @@ async def leaderboard(
     await update.message.reply_text(
         text,
         parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "💰 Richest Players",
+                    callback_data="rich_leaderboard",
+                )
+            ]
+        ]),
     )
 
 # ============================================================
@@ -7498,7 +8597,8 @@ async def fight(
             end_battle(existing["id"])
         else:
             await update.message.reply_text(
-                "⚔️ You are already in a battle."
+                "⚔️ You are already in a battle.\n"
+                "🚪 Use /leave to leave it first."
             )
             return
 
@@ -7988,6 +9088,45 @@ async def global_fight(
         except Exception:
             remove_global_fight_challenge(challenge["id"])
 
+async def leave_fight(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    user = await ensure_user(update)
+
+    # Leave any active/pending normal battle.
+    battle = get_active_battle(user["user_id"])
+
+    if battle:
+        end_battle(battle["id"])
+        await update.message.reply_text(
+            "🚪 You left the fight.\n\n"
+            "✅ You can now challenge another player."
+        )
+        return
+
+    # Cancel any pending Global Fight challenge involving this user.
+    removed = False
+    for cid, challenge in list(global_fight_challenges.items()):
+        if user["user_id"] in (
+            challenge.get("p1"),
+            challenge.get("p2"),
+        ):
+            remove_global_fight_challenge(cid)
+            removed = True
+
+    if removed:
+        await update.message.reply_text(
+            "🚪 You left the Global Fight challenge.\n\n"
+            "✅ You can fight again."
+        )
+        return
+
+    await update.message.reply_text(
+        "❌ You are not currently in a fight."
+    )
+
+
 async def kill(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -8060,8 +9199,10 @@ async def kill(
 
     if not target:
         await update.message.reply_text(
-            "DEBUG RAW MESSAGE:\\n"
-            + str(update.message.to_dict())
+            "💀 <b>How to use /kill</b>\n\n"
+            "👉 Reply to the player's message and send <code>/kill</code>.\n\n"
+            "⚔️ Example: Reply to someone → <code>/kill</code>",
+            parse_mode="HTML",
         )
         return
 
@@ -8086,9 +9227,8 @@ async def kill(
 
     if target_protection > 0:
         await update.message.reply_text(
-            "🛡️ That player is protected!\\n"
-            f"⏳ Protection remaining: "
-            f"{protection_duration_text(target_protection)}"
+            "🛡️ That player is protected!\n"
+            f"⏳ Protection remaining: {protection_duration_text(target_protection)}"
         )
         return
 
@@ -8104,58 +9244,37 @@ async def kill(
         )
         return
 
-    damage = random.randint(30, 50)
-
-    new_hp = max(
-        0,
-        target["hp"] - damage,
-    )
+    # Instant kill for any unprotected player.
+    # XP scales with opponent level: 80-200 XP.
+    target_level = max(1, int(target["level"] or 1))
+    kill_xp = min(200, 80 + ((target_level - 1) * 10))
 
     update_user(
         user["user_id"],
         last_kill=int(time.time()),
+        kills=user["kills"] + 1,
     )
 
     update_user(
         target["user_id"],
-        hp=new_hp,
+        hp=0,
+        deaths=target["deaths"] + 1,
     )
 
-    if new_hp == 0:
-        update_user(
-            user["user_id"],
-            kills=user["kills"] + 1,
-        )
+    xp = add_player_xp(
+        user["user_id"],
+        kill_xp,
+    )
 
-        update_user(
-            target["user_id"],
-            deaths=target["deaths"] + 1,
-        )
+    await update.message.reply_text(
+        f"⚔️ {mention(user)} attacked {mention(target)}!\n\n"
+        f"💀 {mention(target)} was defeated instantly!\n"
+        f"❤️ {mention(target)} HP: 0/{target['max_hp']}\n"
+        f"🏆 +{kill_xp} XP\n"
+        "🔄 They must use /revive.\n"
+        f"{xp_message(xp)}"
+    )
 
-        xp = add_player_xp(
-            user["user_id"],
-            XP_REWARDS["kill"],
-        )
-
-        await update.message.reply_text(
-            f"⚔️ {mention(user)} attacked "
-            f"{mention(target)}!\\n\\n"
-            f"💀 {mention(target)} was defeated!\\n"
-            f"🏆 +{XP_REWARDS['kill']} XP\\n"
-            f"{xp_message(xp)}"
-        )
-
-    else:
-        await update.message.reply_text(
-            f"⚔️ {mention(user)} dealt {damage} damage!\\n"
-            f"❤️ {mention(target)} HP: "
-            f"{new_hp}/{target['max_hp']}"
-        )
-
-
-# ============================================================
-# ROB
-# ============================================================
 
 async def rob(
     update: Update,
@@ -8163,12 +9282,20 @@ async def rob(
 ):
     user = await ensure_user(update)
 
-    if not update.message.reply_to_message:
+    if not update.message:
+        return
+
+    # /rob works in groups only.
+    if not update.effective_chat or update.effective_chat.type not in (
+        "group",
+        "supergroup",
+    ):
         await update.message.reply_text(
-            "Reply to someone's message to rob them."
+            "🚫 /rob can only be used in a group."
         )
         return
 
+    # Keep the existing rob cooldown.
     remaining = cooldown_remaining(
         user["last_rob"],
         ROB_COOLDOWN,
@@ -8180,7 +9307,50 @@ async def rob(
         )
         return
 
-    target_tg = update.message.reply_to_message.from_user
+    # Target must come from the exact message being replied to.
+    reply = update.message.reply_to_message
+
+    if not reply or not reply.from_user:
+        await update.message.reply_text(
+            "Reply to a player's message like:\n"
+            "<code>/rob 1200</code>"
+        )
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "💰 Enter the exact amount to rob.\n\n"
+            "Example: <code>/rob 1200</code>"
+        )
+        return
+
+    try:
+        amount = int(context.args[0])
+    except (TypeError, ValueError):
+        await update.message.reply_text(
+            "❌ Amount must be a number.\n"
+            "Example: <code>/rob 1200</code>"
+        )
+        return
+
+    if amount <= 0:
+        await update.message.reply_text(
+            "❌ Rob amount must be greater than 0."
+        )
+        return
+
+    # Normal: 10,000 max
+    # Premium: 200,000 max
+    max_rob = 200000 if premium_active(user["user_id"]) else 10000
+
+    if amount > max_rob:
+        await update.message.reply_text(
+            f"🚫 Your maximum rob limit is "
+            f"<b>{max_rob:,}</b> coins."
+        )
+        return
+
+    target_tg = reply.from_user
 
     if target_tg.id == user["user_id"]:
         await update.message.reply_text(
@@ -8198,6 +9368,12 @@ async def rob(
         )
         target = get_user(target_tg.id)
 
+    if not target:
+        await update.message.reply_text(
+            "❌ I couldn't find that player."
+        )
+        return
+
     target_protection = protection_remaining(target)
 
     if target_protection > 0:
@@ -8214,35 +9390,166 @@ async def rob(
         )
         return
 
-    update_user(
-        user["user_id"],
-        last_rob=int(time.time()),
-    )
-
-    success = random.random() < 0.5
-
-    if not success:
+    if amount > target["coins"]:
         await update.message.reply_text(
-            "🚨 Rob failed!"
+            f"💸 That player only has "
+            f"<b>{target['coins']:,}</b> coins."
         )
         return
 
-    stolen = min(
-        random.randint(50, 300),
-        target["coins"],
-    )
+    # One rob per exact replied Telegram message.
+    # Different messages from the same player can be robbed separately.
+    conn = sqlite3.connect("hrishu.db")
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
 
-    update_user(
-        user["user_id"],
-        coins=user["coins"] + stolen,
-        robs=user["robs"] + 1,
-    )
+    try:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS rob_claims (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                target_user_id INTEGER NOT NULL,
+                robber_user_id INTEGER NOT NULL,
+                amount INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                UNIQUE(chat_id, message_id)
+            )
+            """
+        )
+        conn.commit()
 
-    update_user(
-        target["user_id"],
-        coins=target["coins"] - stolen,
-    )
+        conn.execute("BEGIN IMMEDIATE")
 
+        cur.execute(
+            """
+            SELECT id
+            FROM rob_claims
+            WHERE chat_id = ?
+              AND message_id = ?
+            LIMIT 1
+            """,
+            (
+                update.effective_chat.id,
+                reply.message_id,
+            ),
+        )
+
+        if cur.fetchone():
+            conn.rollback()
+            await update.message.reply_text(
+                "🚫 This exact message has already been robbed.\n"
+                "Reply to another message from that player to rob again."
+            )
+            return
+
+        # Re-read balances inside the transaction.
+        cur.execute(
+            "SELECT coins FROM users WHERE user_id = ?",
+            (user["user_id"],),
+        )
+        robber_row = cur.fetchone()
+
+        cur.execute(
+            "SELECT coins FROM users WHERE user_id = ?",
+            (target["user_id"],),
+        )
+        target_row = cur.fetchone()
+
+        if not robber_row or not target_row:
+            conn.rollback()
+            await update.message.reply_text(
+                "❌ Player data could not be loaded."
+            )
+            return
+
+        robber_balance = int(robber_row["coins"] or 0)
+        target_balance = int(target_row["coins"] or 0)
+
+        if amount > target_balance:
+            conn.rollback()
+            await update.message.reply_text(
+                f"💸 That player only has "
+                f"<b>{target_balance:,}</b> coins."
+            )
+            return
+
+        new_robber_balance = robber_balance + amount
+        new_target_balance = target_balance - amount
+        now = int(time.time())
+
+        cur.execute(
+            """
+            UPDATE users
+            SET coins = ?,
+                last_rob = ?,
+                robs = robs + 1
+            WHERE user_id = ?
+            """,
+            (
+                new_robber_balance,
+                now,
+                user["user_id"],
+            ),
+        )
+
+        cur.execute(
+            """
+            UPDATE users
+            SET coins = ?
+            WHERE user_id = ?
+            """,
+            (
+                new_target_balance,
+                target["user_id"],
+            ),
+        )
+
+        cur.execute(
+            """
+            INSERT INTO rob_claims (
+                chat_id,
+                message_id,
+                target_user_id,
+                robber_user_id,
+                amount,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                update.effective_chat.id,
+                reply.message_id,
+                target["user_id"],
+                user["user_id"],
+                amount,
+                now,
+            ),
+        )
+
+        conn.commit()
+
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        await update.message.reply_text(
+            "🚫 This exact message has already been robbed.\n"
+            "Reply to another message from that player to rob again."
+        )
+        return
+
+    except Exception as e:
+        conn.rollback()
+        print("ROB ERROR:", e)
+        await update.message.reply_text(
+            "❌ Rob failed due to a temporary error."
+        )
+        return
+
+    finally:
+        conn.close()
+
+    # Cooldown is already consumed by the successful transaction.
     xp = add_player_xp(
         user["user_id"],
         XP_REWARDS["rob"],
@@ -8250,9 +9557,11 @@ async def rob(
 
     try:
         await update.message.reply_text(
-            f"🥷 Rob successful!\n\n"
-            f"💰 You stole {stolen} coins from "
+            f"🥷 <b>Rob successful!</b>\n\n"
+            f"💰 You stole <b>{amount:,}</b> coins from "
             f"{mention(target)}.\n"
+            f"🏦 Their remaining coins: "
+            f"<b>{new_target_balance:,}</b>\n"
             f"{xp_message(xp)}"
         )
     except Exception as e:
@@ -9686,11 +10995,725 @@ async def terms(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+
+
+
+def gamesupport_category_keyboard():
+    return [
+        [
+            InlineKeyboardButton(
+                "💰 Financial Issue",
+                callback_data="gs_financial",
+            ),
+            InlineKeyboardButton(
+                "🎮 Game Concern",
+                callback_data="gs_game",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "📜 Rule Concern",
+                callback_data="gs_rule",
+            ),
+            InlineKeyboardButton(
+                "🐛 Report a Glitch",
+                callback_data="gs_glitch",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "🚨 Report a Player",
+                callback_data="gs_player",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "📝 Other Issue",
+                callback_data="gs_other",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "🔙 Back",
+                callback_data="back",
+            ),
+        ],
+    ]
+
+
+async def gamesupport(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.effective_user:
+        return
+
+    # Private chat only.
+    if not update.effective_chat or update.effective_chat.type != "private":
+        await update.message.reply_text(
+            "🎮 <b>Game Support</b>\n\n"
+            "❌ Game support can only be used in private chat.\n\n"
+            "👉 DM me and use /gamesupport.",
+            parse_mode="HTML",
+        )
+        return
+
+    context.user_data["gamesupport"] = {
+        "step": "category",
+        "category": None,
+        "reporter_hrishu_id": None,
+        "reported_id": None,
+        "message_id": None,
+    }
+
+    msg = await update.message.reply_text(
+        "🎮 <b>Hrishu Game Support</b>\n\n"
+        "What do you need help with?\n\n"
+        "Select a category below:",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(
+            gamesupport_category_keyboard()
+        ),
+    )
+
+    context.user_data["gamesupport"]["message_id"] = msg.message_id
+
+
+async def gamesupport_edit(
+    context,
+    chat_id,
+    message_id,
+    text,
+    keyboard=None,
+):
+    try:
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=text,
+            parse_mode="HTML",
+            reply_markup=(
+                InlineKeyboardMarkup(keyboard)
+                if keyboard
+                else None
+            ),
+        )
+        return True
+    except Exception as e:
+        print(f"❌ Game Support edit error: {e}")
+        return False
+
+
+
+async def gamesupport_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    query = update.callback_query
+
+    if not query or not update.effective_user:
+        return
+
+    # PFP admin callbacks are handled by admin_pfp_callback.
+    if (query.data or "").startswith("admin_pfp"):
+        return
+
+    if not query.message:
+        await query.answer()
+        return
+
+    if query.message.chat.type != "private":
+        await query.answer(
+            "Game support is available in private chat only.",
+            show_alert=True,
+        )
+        return
+
+    data = query.data or ""
+
+    if not data.startswith("gs_"):
+        return
+
+    await query.answer()
+
+    support = context.user_data.get("gamesupport")
+
+    if not support:
+        await query.edit_message_text(
+            "❌ <b>Support session expired.</b>\n\n"
+            "Use /gamesupport again.",
+            parse_mode="HTML",
+        )
+        return
+
+    chat_id = query.message.chat.id
+    message_id = query.message.message_id
+
+    # Keep one single support message forever.
+    support["message_id"] = message_id
+
+    # ========================================================
+    # NEW SUPPORT REQUEST
+    # ========================================================
+    if data == "gs_new":
+        context.user_data["gamesupport"] = {
+            "step": "category",
+            "category": None,
+            "reporter_hrishu_id": None,
+            "reported_id": None,
+            "message_id": message_id,
+        }
+
+        await gamesupport_edit(
+            context,
+            chat_id,
+            message_id,
+            "🎮 <b>Hrishu Game Support</b>\n\n"
+            "What do you need help with?\n\n"
+            "Select a category below:",
+            gamesupport_category_keyboard(),
+        )
+        return
+
+    # ========================================================
+    # CATEGORY -> BACK TO MAIN MENU
+    # ========================================================
+    if data == "gs_back_main":
+        context.user_data.pop("gamesupport", None)
+
+        await gamesupport_edit(
+            context,
+            chat_id,
+            message_id,
+            "🎮 <b>Game Support closed.</b>\n\n"
+            "Use /gamesupport anytime if you need help.",
+            [
+                [
+                    InlineKeyboardButton(
+                        "🏠 Main Menu",
+                        callback_data="back",
+                    )
+                ]
+            ],
+        )
+        return
+
+    # ========================================================
+    # BACK: EXPLANATION -> PREVIOUS STEP
+    # ========================================================
+    if data == "gs_back_explanation":
+        if support.get("category") == "🚨 Report a Player":
+            support["step"] = "reported_id"
+
+            keyboard = [
+                [
+                    InlineKeyboardButton(
+                        "❓ I don't know their Hrishu ID",
+                        callback_data="gs_unknown_reported",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "🔙 Back",
+                        callback_data="gs_back_reporter",
+                    )
+                ],
+            ]
+
+            await gamesupport_edit(
+                context,
+                chat_id,
+                message_id,
+                "🚨 <b>Report a Player</b>\n\n"
+                f"👤 Your Hrishu ID: "
+                f"<code>{support.get('reporter_hrishu_id') or 'Unknown'}</code>\n\n"
+                "Now enter the <b>Hrishu ID of the player "
+                "you want to report</b>.\n\n"
+                "Or tap <b>I don't know</b>.",
+                keyboard,
+            )
+        else:
+            support["step"] = "category"
+            support["category"] = None
+
+            await gamesupport_edit(
+                context,
+                chat_id,
+                message_id,
+                "🎮 <b>Hrishu Game Support</b>\n\n"
+                "What do you need help with?\n\n"
+                "Select a category below:",
+                gamesupport_category_keyboard(),
+            )
+        return
+
+    # ========================================================
+    # BACK: REPORTED ID -> REPORTER ID
+    # ========================================================
+    if data == "gs_back_reporter":
+        support["step"] = "reporter_id"
+        support["reported_id"] = None
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "❓ I don't know my Hrishu ID",
+                    callback_data="gs_unknown_reporter",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔙 Back",
+                    callback_data="gs_back_category",
+                )
+            ],
+        ]
+
+        await gamesupport_edit(
+            context,
+            chat_id,
+            message_id,
+            "🚨 <b>Report a Player</b>\n\n"
+            "Enter <b>your Hrishu ID</b>.\n\n"
+            "Or tap <b>I don't know my Hrishu ID</b>.",
+            keyboard,
+        )
+        return
+
+    # ========================================================
+    # BACK: REPORTER ID -> CATEGORY
+    # ========================================================
+    if data == "gs_back_category":
+        support["step"] = "category"
+        support["category"] = None
+        support["reporter_hrishu_id"] = None
+        support["reported_id"] = None
+
+        await gamesupport_edit(
+            context,
+            chat_id,
+            message_id,
+            "🎮 <b>Hrishu Game Support</b>\n\n"
+            "What do you need help with?\n\n"
+            "Select a category below:",
+            gamesupport_category_keyboard(),
+        )
+        return
+
+    # ========================================================
+    # CATEGORY MAP
+    # ========================================================
+    category_map = {
+        "gs_financial": "💰 Financial Issue",
+        "gs_game": "🎮 Game Concern",
+        "gs_rule": "📜 Rule Concern",
+        "gs_glitch": "🐛 Report a Glitch",
+        "gs_player": "🚨 Report a Player",
+        "gs_other": "📝 Other Issue",
+    }
+
+    # ========================================================
+    # REPORT PLAYER
+    # ========================================================
+    if data == "gs_player":
+        support["category"] = "🚨 Report a Player"
+        support["step"] = "reporter_id"
+        support["reporter_hrishu_id"] = None
+        support["reported_id"] = None
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "❓ I don't know my Hrishu ID",
+                    callback_data="gs_unknown_reporter",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔙 Back",
+                    callback_data="gs_back_category",
+                )
+            ],
+        ]
+
+        await gamesupport_edit(
+            context,
+            chat_id,
+            message_id,
+            "🚨 <b>Report a Player</b>\n\n"
+            "First, enter <b>your Hrishu ID</b>.\n\n"
+            "Or tap <b>I don't know my Hrishu ID</b>.",
+            keyboard,
+        )
+        return
+
+    # ========================================================
+    # NORMAL CATEGORY
+    # ========================================================
+    if data in category_map:
+        support["category"] = category_map[data]
+        support["step"] = "explanation"
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "🔙 Back",
+                    callback_data="gs_back_category",
+                )
+            ]
+        ]
+
+        await gamesupport_edit(
+            context,
+            chat_id,
+            message_id,
+            f"{category_map[data]}\n\n"
+            "📝 <b>Please briefly explain your issue.</b>\n\n"
+            "Send your explanation in your next message.",
+            keyboard,
+        )
+        return
+
+    # ========================================================
+    # DON'T KNOW REPORTER ID
+    # ========================================================
+    if data == "gs_unknown_reporter":
+        user = await ensure_user(update)
+
+        support["reporter_hrishu_id"] = str(
+            user["hrishu_id"]
+        )
+        support["step"] = "reported_id"
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "❓ I don't know their Hrishu ID",
+                    callback_data="gs_unknown_reported",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔙 Back",
+                    callback_data="gs_back_reporter",
+                )
+            ],
+        ]
+
+        await gamesupport_edit(
+            context,
+            chat_id,
+            message_id,
+            "🚨 <b>Report a Player</b>\n\n"
+            "✅ Your Hrishu ID has been found.\n"
+            f"🆔 Your ID: "
+            f"<code>{user['hrishu_id']}</code>\n\n"
+            "Now enter the <b>Hrishu ID of the player "
+            "you want to report</b>.\n\n"
+            "Or tap <b>I don't know their Hrishu ID</b>.",
+            keyboard,
+        )
+        return
+
+    # ========================================================
+    # DON'T KNOW REPORTED PLAYER ID
+    # ========================================================
+    if data == "gs_unknown_reported":
+        support["reported_id"] = "Unknown"
+        support["step"] = "explanation"
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "🔙 Back",
+                    callback_data="gs_back_explanation",
+                )
+            ]
+        ]
+
+        await gamesupport_edit(
+            context,
+            chat_id,
+            message_id,
+            "🚨 <b>Report a Player</b>\n\n"
+            "✅ Reported player's Hrishu ID: <b>Unknown</b>\n\n"
+            "📝 <b>Now explain the problem.</b>\n\n"
+            "Briefly describe what happened.",
+            keyboard,
+        )
+        return
+
+
+async def handle_gamesupport_message(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    if not update.message or not update.effective_user:
+        return
+
+    if context.user_data.get("admin_broadcast"):
+        await admin_broadcast_message(update, context)
+        return
+
+    if not update.effective_chat or update.effective_chat.type != "private":
+        return
+
+    support = context.user_data.get("gamesupport")
+
+    if not support:
+        return
+
+    # Ignore commands.
+    if (
+        update.message.text
+        and update.message.text.startswith("/")
+    ):
+        return
+
+    text = (update.message.text or "").strip()
+
+    if not text:
+        return
+
+    chat_id = update.effective_chat.id
+    message_id = support.get("message_id")
+
+    if not message_id:
+        return
+
+    step = support.get("step")
+
+    # ========================================================
+    # REPORTER HRISHU ID
+    # ========================================================
+    if step == "reporter_id":
+
+        if not text.isdigit():
+            await gamesupport_edit(
+                context,
+                chat_id,
+                message_id,
+                "🚨 <b>Report a Player</b>\n\n"
+                "❌ Please enter a valid Hrishu ID using numbers only.\n\n"
+                "Or tap <b>I don't know my Hrishu ID</b>.",
+                [
+                    [
+                        InlineKeyboardButton(
+                            "❓ I don't know my Hrishu ID",
+                            callback_data="gs_unknown_reporter",
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "🔙 Back",
+                            callback_data="gs_back_category",
+                        )
+                    ],
+                ],
+            )
+            return
+
+        support["reporter_hrishu_id"] = text
+        support["step"] = "reported_id"
+
+        await gamesupport_edit(
+            context,
+            chat_id,
+            message_id,
+            "🚨 <b>Report a Player</b>\n\n"
+            f"✅ Your Hrishu ID: <code>{text}</code>\n\n"
+            "Now enter the <b>Hrishu ID of the player "
+            "you want to report</b>.\n\n"
+            "Or tap <b>I don't know their Hrishu ID</b>.",
+            [
+                [
+                    InlineKeyboardButton(
+                        "❓ I don't know their Hrishu ID",
+                        callback_data="gs_unknown_reported",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "🔙 Back",
+                        callback_data="gs_back_reporter",
+                    )
+                ],
+            ],
+        )
+        return
+
+    # ========================================================
+    # REPORTED PLAYER HRISHU ID
+    # ========================================================
+    if step == "reported_id":
+
+        if not text.isdigit():
+            await gamesupport_edit(
+                context,
+                chat_id,
+                message_id,
+                "🚨 <b>Report a Player</b>\n\n"
+                "❌ Please enter a valid Hrishu ID using numbers only.",
+                [
+                    [
+                        InlineKeyboardButton(
+                            "❓ I don't know their Hrishu ID",
+                            callback_data="gs_unknown_reported",
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "🔙 Back",
+                            callback_data="gs_back_reporter",
+                        )
+                    ],
+                ],
+            )
+            return
+
+        support["reported_id"] = text
+        support["step"] = "explanation"
+
+        await gamesupport_edit(
+            context,
+            chat_id,
+            message_id,
+            "🚨 <b>Report a Player</b>\n\n"
+            f"👤 Your Hrishu ID: "
+            f"<code>{support.get('reporter_hrishu_id')}</code>\n"
+            f"🚨 Reported Player ID: <code>{text}</code>\n\n"
+            "📝 <b>Now explain the problem.</b>\n\n"
+            "Briefly describe what happened and why you are reporting this player.",
+            [
+                [
+                    InlineKeyboardButton(
+                        "🔙 Back",
+                        callback_data="gs_back_explanation",
+                    )
+                ]
+            ],
+        )
+        return
+
+    # ========================================================
+    # EXPLANATION
+    # ========================================================
+    if step != "explanation":
+        return
+
+    reporter = await ensure_user(update)
+
+    reporter_hrishu_id = str(
+        support.get("reporter_hrishu_id")
+        or reporter["hrishu_id"]
+    )
+
+    reported_id = str(
+        support.get("reported_id") or "N/A"
+    )
+
+    telegram_user = update.effective_user
+
+    username = (
+        f"@{telegram_user.username}"
+        if telegram_user.username
+        else "No username"
+    )
+
+    report_text = (
+        "🎮 <b>NEW HRISHU GAME SUPPORT REPORT</b>\n\n"
+        f"📂 <b>Category:</b> "
+        f"{html.escape(str(support.get('category', 'Unknown')))}\n\n"
+        f"👤 <b>User:</b> "
+        f"{html.escape(telegram_user.full_name)}\n"
+        f"🔗 <b>Username:</b> "
+        f"{html.escape(username)}\n"
+        f"🆔 <b>Telegram ID:</b> "
+        f"<code>{telegram_user.id}</code>\n"
+        f"🎫 <b>Hrishu ID:</b> "
+        f"<code>{html.escape(reporter_hrishu_id)}</code>\n\n"
+        f"🚨 <b>Reported Player Hrishu ID:</b> "
+        f"<code>{html.escape(reported_id)}</code>\n\n"
+        f"📝 <b>Explanation:</b>\n"
+        f"{html.escape(text)}\n\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "🎮 Hrishu Game Support"
+    )
+
+    try:
+        await context.bot.send_message(
+            chat_id=OWNER_ID,
+            text=report_text,
+            parse_mode="HTML",
+        )
+
+        context.user_data.pop("gamesupport", None)
+
+        await gamesupport_edit(
+            context,
+            chat_id,
+            message_id,
+            "✅ <b>Report successfully submitted!</b>\n\n"
+            "Your report has been sent to the Hrishu owner.\n\n"
+            "Thank you for helping improve Hrishu.",
+            [
+                [
+                    InlineKeyboardButton(
+                        "🎮 New Support Request",
+                        callback_data="gs_new",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "🏠 Main Menu",
+                        callback_data="back",
+                    )
+                ],
+            ],
+        )
+
+    except Exception as e:
+        print(
+            f"❌ Game support owner notification failed: {e}"
+        )
+
+        await gamesupport_edit(
+            context,
+            chat_id,
+            message_id,
+            "⚠️ <b>Your report could not be submitted.</b>\n\n"
+            "Please try again later.",
+            [
+                [
+                    InlineKeyboardButton(
+                        "🔙 Back",
+                        callback_data="gs_back_explanation",
+                    )
+                ]
+            ],
+        )
+
 async def paysupport(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.effective_user:
+        return
+
+    # Payment support is private-chat only.
+    if not update.effective_chat or update.effective_chat.type != "private":
+        await update.message.reply_text(
+            "💳 <b>Payment Support</b>\n\n"
+            "❌ Payment support is available only in private chat.\n\n"
+            "👉 DM me and use /paysupport there.",
+            parse_mode="HTML",
+        )
+        return
+
+    user = await ensure_user(update)
+
+    context.user_data["waiting_for_payment_support"] = True
+
     await update.message.reply_text(
         "💳 <b>Payment Support</b>\n\n"
-        "For a Premium payment issue, send the payment receipt/details "
-        "to the Hrishu owner for support.",
+        "Please type your payment/Premium issue in your next message.\n\n"
+        "Your Telegram username, Telegram ID and Hrishu ID "
+        "will automatically be sent to the Hrishu owner.\n\n"
+        "❌ Do not send passwords, OTPs or other private information.",
         parse_mode="HTML",
     )
 
@@ -9699,66 +11722,2050 @@ async def paysupport(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = await ensure_user(update)
 
-    text = (
-        f"👋 <b>Welcome to Hrishu, {mention(user)}!</b>\n\n"
-        f"🎮 <b>Your Telegram RPG & Economy Bot</b>\n"
-        f"⚔️ Fight • 💰 Earn • 🆙 Level Up • 🌌 Reach Legend\n\n"
-        f"🆔 <b>Hrishu ID:</b> <code>{user['hrishu_id']}</code>\n"
-        f"💰 <b>Coins:</b> {user['coins']}\n"
-        f"⭐ <b>XP:</b> {user['xp']}\n"
-        f"🏆 <b>Rank:</b> {get_rank(user['xp'])}\n"
-        f"❤️ <b>HP:</b> {user['hp']}/{user['max_hp']}\n\n"
-        f"👇 <b>Choose an option below:</b>"
+    player_name = mention(user)
+
+    protection = protection_remaining(user)
+    protection_text = (
+        protection_duration_text(protection)
+        if protection > 0
+        else "None"
     )
 
+    player_name = (
+        update.effective_user.first_name
+        if update.effective_user and update.effective_user.first_name
+        else "Player"
+    )
+
+    protection = protection_remaining(user)
+
+    protection_text = (
+        protection_duration_text(protection)
+        if protection > 0
+        else "ɴᴏɴᴇ"
+    )
+
+    text = (
+        f"💙 ʜɪᴇᴇᴇᴇᴇ {player_name}! 👋\n"
+        f"ɪ'ᴍ <b>ʜʀɪѕʜᴜ</b> — ʏᴏᴜʀ ɢᴀᴍɪɴɢ ʙᴏʏ 🎮\n"
+        f"ɪ'ᴍ ʜᴇʀᴇ ᴛᴏ ʙʀɪɴɢ ɢᴀᴍᴇꜱ & ʟᴏᴛꜱ ᴏꜰ ꜰᴜɴ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ! 💙\n\n"
+        f"📊 <b>ʏᴏᴜʀ ꜱᴛᴀᴛꜱ:</b>\n"
+        f"💰 ʙᴀʟᴀɴᴄᴇ: {user['coins']}\n"
+        f"🏆 ʀᴀɴᴋ: {get_rank(user['xp'])}\n"
+        f"⭐ xᴘ: {user['xp']}\n"
+        f"🎚️ ʟᴇᴠᴇʟ: {user['level']}\n"
+        f"🛡️ ᴘʀᴏᴛᴇᴄᴛɪᴏɴ: {protection_text}\n\n"
+        f"🎮 <b>ʜᴏᴡ ᴛᴏ ᴘʟᴀʏ?</b>\n"
+        f"💰 /bal - ᴄʜᴇᴄᴋ ʏᴏᴜʀ ʙᴀʟᴀɴᴄᴇ\n"
+        f"👤 /pfp - ᴄʜᴇᴄᴋ ʏᴏᴜʀ ᴘꜰᴘ\n"
+        f"🎁 /daily - ɢᴇᴛ ꜰʀᴇᴇ ᴄᴏɪɴꜱ\n"
+        f"🛡️ /protect - ꜱᴀᴠᴇ ʏᴏᴜʀꜱᴇʟꜰ\n"
+        f"⚔️ /kill - ᴋɪʟʟ ᴏᴛʜᴇʀ ᴘʟᴀʏᴇʀꜱ\n"
+        f"⚡ /power - ᴜᴘɢʀᴀᴅᴇ ʏᴏᴜʀ ᴘᴏᴡᴇʀꜱ\n\n"
+        f"👇 ᴄʜᴏᴏѕᴇ ᴀɴ ᴏᴘᴛɪᴏɴ ʙᴇʟᴏᴡ:"
+    )
+
+
     keyboard = [
-        [InlineKeyboardButton("➕ Add Me to Group", url="https://t.me/aapkahrishubot?startgroup=true")],
+        [
+            InlineKeyboardButton(
+                "➕ Add Me to Group",
+                url="https://t.me/aapkahrishubot?startgroup=true",
+            )
+        ],
         [
             InlineKeyboardButton("👤 Profile", callback_data="profile"),
-            InlineKeyboardButton("🆔 My ID", callback_data="myid")
-        ],
-        [
-            InlineKeyboardButton("⚡ Powers", callback_data="power_menu")
-        ],
-        [
-            InlineKeyboardButton("📊 Level", callback_data="level"),
-            InlineKeyboardButton("🏆 Leaderboard", callback_data="leaderboard")
-        ],
-        [
-            InlineKeyboardButton("💰 Economy", callback_data="economy"),
-            InlineKeyboardButton("⚔️ RPG", callback_data="rpg")
-        ],
-        [
-            InlineKeyboardButton("🛒 Shop", callback_data="shop"),
-            InlineKeyboardButton("🎒 Inventory", callback_data="inventory")
+            InlineKeyboardButton(
+                "✨ Features",
+                callback_data="features_menu",
+            ),
         ],
         [
             InlineKeyboardButton(
-                "🏦 Manage Bank Accounts",
-                callback_data="bank_menu",
-            )
+                "📜 Commands",
+                callback_data="commands",
+            ),
+            InlineKeyboardButton(
+                "🎮 Support",
+                callback_data="gamesupport_menu",
+            ),
         ],
-        [InlineKeyboardButton("🐾 Pokemon", callback_data="pokemon_menu")],
-        [InlineKeyboardButton("💎 Premium", callback_data="premium")],
-        [InlineKeyboardButton("📜 Commands", callback_data="commands")]
+        [
+            InlineKeyboardButton(
+                "💎 Premium",
+                callback_data="premium",
+                style="primary",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "🏦 Manage Bank Account",
+                callback_data="bank_menu",
+            ),
+        ],
     ]
-
-    if update.effective_user and update.effective_user.id in ({OWNER_ID} | ADMIN_IDS):
-        keyboard.insert(
-            -1,
-            [InlineKeyboardButton("🛠️ Admin Tools", callback_data="admin_tools")]
-        )
 
     await update.message.reply_text(
         text,
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
+
+async def handle_payment_support_message(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    if not update.message or not update.effective_user:
+        return
+
+    if not context.user_data.get("waiting_for_payment_support"):
+        return
+
+    # Only accept support messages from private chat.
+    if not update.effective_chat or update.effective_chat.type != "private":
+        context.user_data.pop("waiting_for_payment_support", None)
+        return
+
+    issue = update.message.text or update.message.caption or ""
+
+    if not issue.strip():
+        await update.message.reply_text(
+            "❌ Please type your payment issue in text."
+        )
+        return
+
+    telegram_user = update.effective_user
+    username = (
+        f"@{telegram_user.username}"
+        if telegram_user.username
+        else "No username"
+    )
+
+    user = await ensure_user(update)
+
+    hrishu_id = user["hrishu_id"]
+
+    owner_message = (
+        "💳 <b>NEW PAYMENT SUPPORT REQUEST</b>\n\n"
+        f"👤 <b>User:</b> {telegram_user.first_name or 'Unknown'}\n"
+        f"🔗 <b>Username:</b> {username}\n"
+        f"🆔 <b>Telegram ID:</b> <code>{telegram_user.id}</code>\n"
+        f"⭐ <b>Hrishu ID:</b> <code>{hrishu_id}</code>\n\n"
+        f"📝 <b>Issue:</b>\n{issue}"
+    )
+
+    try:
+        await context.bot.send_message(
+            chat_id=OWNER_ID,
+            text=owner_message,
+            parse_mode="HTML",
+        )
+
+        context.user_data.pop("waiting_for_payment_support", None)
+
+        await update.message.reply_text(
+            "✅ <b>Your support request has been sent!</b>\n\n"
+            "The Hrishu owner will check your issue.",
+            parse_mode="HTML",
+        )
+
+    except Exception as e:
+        print(f"❌ Payment support send error: {e}")
+
+        await update.message.reply_text(
+            "⚠️ I couldn't send your support request right now. "
+            "Please try again later."
+        )
+
+
+
+# ==========================================================
+# REAL MONEY EVENT
+# ==========================================================
+
+REAL_MONEY_EVENT_ID = "group_add_72h_v1"
+
+# Keep 0 until you are ready to announce/start the event.
+# When activated, it runs for exactly 72 hours.
+REAL_MONEY_EVENT_START = 1790534932
+
+REAL_MONEY_REWARD = 100
+REAL_MONEY_EVENT_DURATION = 72 * 60 * 60
+
+
+def real_money_event_end():
+    if not REAL_MONEY_EVENT_START:
+        return 0
+    return REAL_MONEY_EVENT_START + REAL_MONEY_EVENT_DURATION
+
+
+def real_money_event_active(now=None):
+    if now is None:
+        now = int(time.time())
+
+    start = REAL_MONEY_EVENT_START
+    end = real_money_event_end()
+
+    return bool(start and start <= now < end)
+
+
+def init_real_money_db():
+    conn = sqlite3.connect("hrishu.db")
+    cur = conn.cursor()
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS real_money_wallets (
+            user_id INTEGER PRIMARY KEY,
+            gold INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS real_money_claims (
+            event_id TEXT NOT NULL,
+            user_id INTEGER NOT NULL,
+            chat_id INTEGER NOT NULL,
+            claimed_at INTEGER NOT NULL,
+            PRIMARY KEY (event_id, user_id, chat_id)
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS real_money_withdrawals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            amount INTEGER NOT NULL,
+            upi_id TEXT,
+            qr_file_id TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at INTEGER NOT NULL,
+            processed_at INTEGER
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+
+async def get_real_money(update, context):
+    if not update.effective_user:
+        return
+
+    query = update.callback_query
+    if query:
+        await query.answer()
+
+    target = update.message or (query.message if query else None)
+
+    if not target:
+        return
+
+    user_id = update.effective_user.id
+
+    conn = sqlite3.connect("hrishu.db")
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT OR IGNORE INTO real_money_wallets(user_id, gold)
+        VALUES (?, 0)
+        """,
+        (user_id,),
+    )
+
+    cur.execute(
+        "SELECT gold FROM real_money_wallets WHERE user_id = ?",
+        (user_id,),
+    )
+    row = cur.fetchone()
+    gold = int(row[0]) if row else 0
+
+    cur.execute(
+        """
+        SELECT COUNT(*)
+        FROM real_money_claims
+        WHERE event_id = ? AND user_id = ?
+        """,
+        (REAL_MONEY_EVENT_ID, user_id),
+    )
+    groups_rewarded = int(cur.fetchone()[0] or 0)
+
+    conn.commit()
+    conn.close()
+
+    now = int(time.time())
+    start = REAL_MONEY_EVENT_START
+    end = real_money_event_end()
+
+    if start == 0:
+        status = (
+            "⏳ <b>Event Status:</b> Not started yet.\n"
+            "The event has not been activated."
+        )
+    elif now < start:
+        status = "⏳ <b>Event Status:</b> Starts later."
+    elif now < end:
+        remaining = end - now
+        hours = remaining // 3600
+        minutes = (remaining % 3600) // 60
+
+        status = (
+            "🟢 <b>Event Status:</b> LIVE\n"
+            f"⏰ <b>Time Remaining:</b> {hours}h {minutes}m"
+        )
+    else:
+        status = (
+            "🔴 <b>Event Status:</b> Event ended.\n"
+            "✅ Your previously earned Gold is still saved."
+        )
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "💸 Withdraw Money",
+                callback_data="rm_withdraw",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "🎁 Earn Balance",
+                url="https://t.me/aapkahrishubot?startgroup=true",
+            ),
+        ],
+    ]
+
+    await target.reply_text(
+        "💵 <b>REAL MONEY BALANCE</b>\n\n"
+        f"💰 <b>Available Balance:</b> {gold}\n"
+        f"👥 <b>Groups Rewarded:</b> {groups_rewarded}\n\n"
+        f"{status}\n\n"
+        f"🎁 <b>Event Reward:</b> +{REAL_MONEY_REWARD} balance per eligible group addition.\n"
+        "🔒 Each user can receive the event reward only once per group.",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+
+RM_WITHDRAW_AMOUNT = 8001
+RM_WITHDRAW_PAYMENT = 8002
+
+
+async def real_money_withdraw_start(update, context):
+    query = update.callback_query
+
+    if not query or not update.effective_user:
+        return ConversationHandler.END
+
+    await query.answer()
+
+    user_id = update.effective_user.id
+
+    conn = sqlite3.connect("hrishu.db")
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT gold FROM real_money_wallets WHERE user_id = ?",
+        (user_id,),
+    )
+    row = cur.fetchone()
+    balance = int(row[0]) if row else 0
+
+    cur.execute(
+        """
+        SELECT id
+        FROM real_money_withdrawals
+        WHERE user_id = ? AND status = 'pending'
+        LIMIT 1
+        """,
+        (user_id,),
+    )
+    pending = cur.fetchone()
+
+    conn.close()
+
+    if pending:
+        await query.message.reply_text(
+            "⏳ <b>You already have a withdrawal request pending.</b>\n\n"
+            "Please wait until it is processed.",
+            parse_mode="HTML",
+        )
+        return ConversationHandler.END
+
+    if balance < 800:
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "🔄 /getrealmoney",
+                    callback_data="rm_refresh",
+                )
+            ]
+        ]
+
+        if real_money_event_active():
+            keyboard.append([
+                InlineKeyboardButton(
+                    "🎁 Earn Balance",
+                    url="https://t.me/aapkahrishubot?startgroup=true",
+                )
+            ])
+
+        if balance == 0:
+            text = (
+                "❌ <b>You have 0 balance to withdraw.</b>\n\n"
+                "🎯 Complete the available tasks to add balance, "
+                "then come back here to withdraw."
+            )
+        else:
+            text = (
+                f"❌ <b>Your current balance is {balance}.</b>\n\n"
+                "🎯 Earn more balance before withdrawing."
+            )
+
+        await query.message.reply_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return ConversationHandler.END
+
+    context.user_data["rm_withdraw"] = {}
+
+    keyboard = [[
+        InlineKeyboardButton("❌ Cancel", callback_data="rm_cancel")
+    ]]
+
+    await query.message.reply_text(
+        "💸 <b>Withdraw Money</b>\n\n"
+        f"💰 Available balance: <b>{balance}</b>\n\n"
+        "Enter the amount of your balance you want to withdraw.\n"
+        "The amount must be <b>800 or a multiple of 800</b>.\n\n"
+        "Example: <code>800</code> or <code>1600</code>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+    return RM_WITHDRAW_AMOUNT
+
+
+async def real_money_withdraw_amount(update, context):
+    if not update.message or not update.effective_user:
+        return ConversationHandler.END
+
+    text = (update.message.text or "").strip()
+
+    if not text.isdigit():
+        await update.message.reply_text(
+            "❌ Please enter the balance amount using numbers only."
+        )
+        return RM_WITHDRAW_AMOUNT
+
+    amount = int(text)
+
+    if amount < 800 or amount % 800 != 0:
+        await update.message.reply_text(
+            "❌ Amount must be <b>800 or a multiple of 800</b>.",
+            parse_mode="HTML",
+        )
+        return RM_WITHDRAW_AMOUNT
+
+    user_id = update.effective_user.id
+
+    conn = sqlite3.connect("hrishu.db")
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT gold FROM real_money_wallets WHERE user_id = ?",
+        (user_id,),
+    )
+    row = cur.fetchone()
+    balance = int(row[0]) if row else 0
+    conn.close()
+
+    if amount > balance:
+        await update.message.reply_text(
+            f"❌ You only have <b>{balance}</b> available.",
+            parse_mode="HTML",
+        )
+        return RM_WITHDRAW_AMOUNT
+
+    context.user_data["rm_withdraw"]["amount"] = amount
+
+    keyboard = [[
+        InlineKeyboardButton("❌ Cancel", callback_data="rm_cancel")
+    ]]
+
+    await update.message.reply_text(
+        "📲 <b>Send your UPI details</b>\n\n"
+        "You can either:\n"
+        "• Send your <b>UPI ID</b> as text\n"
+        "• Send a <b>UPI QR image</b>\n\n"
+        "⚠️ Make sure the UPI details belong to you.",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+    return RM_WITHDRAW_PAYMENT
+
+
+async def real_money_withdraw_payment(update, context):
+    if not update.message or not update.effective_user:
+        return ConversationHandler.END
+
+    data = context.user_data.get("rm_withdraw") or {}
+    amount = int(data.get("amount", 0))
+
+    if amount < 800:
+        context.user_data.pop("rm_withdraw", None)
+        return ConversationHandler.END
+
+    user_id = update.effective_user.id
+
+    upi_id = None
+    qr_file_id = None
+
+    if update.message.photo:
+        qr_file_id = update.message.photo[-1].file_id
+
+    elif update.message.text:
+        upi_id = update.message.text.strip()
+
+        if "@" not in upi_id or len(upi_id) > 100:
+            await update.message.reply_text(
+                "❌ That doesn't look like a valid UPI ID.\n\n"
+                "Send your UPI ID or upload your UPI QR image."
+            )
+            return RM_WITHDRAW_PAYMENT
+
+    else:
+        await update.message.reply_text(
+            "❌ Please send a UPI ID or a UPI QR image."
+        )
+        return RM_WITHDRAW_PAYMENT
+
+    conn = sqlite3.connect("hrishu.db")
+    cur = conn.cursor()
+
+    try:
+        cur.execute("BEGIN IMMEDIATE")
+
+        cur.execute(
+            "SELECT gold FROM real_money_wallets WHERE user_id = ?",
+            (user_id,),
+        )
+        row = cur.fetchone()
+        balance = int(row[0]) if row else 0
+
+        if balance < amount:
+            conn.rollback()
+            await update.message.reply_text(
+                "❌ Your available balance is no longer enough."
+            )
+            context.user_data.pop("rm_withdraw", None)
+            return ConversationHandler.END
+
+        cur.execute(
+            """
+            SELECT id
+            FROM real_money_withdrawals
+            WHERE user_id = ? AND status = 'pending'
+            LIMIT 1
+            """,
+            (user_id,),
+        )
+
+        if cur.fetchone():
+            conn.rollback()
+            await update.message.reply_text(
+                "⏳ You already have a pending withdrawal request."
+            )
+            context.user_data.pop("rm_withdraw", None)
+            return ConversationHandler.END
+
+        cur.execute(
+            """
+            INSERT INTO real_money_withdrawals
+            (user_id, amount, upi_id, qr_file_id, status, created_at)
+            VALUES (?, ?, ?, ?, 'pending', ?)
+            """,
+            (
+                user_id,
+                amount,
+                upi_id,
+                qr_file_id,
+                int(time.time()),
+            ),
+        )
+
+        request_id = cur.lastrowid
+        conn.commit()
+
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        conn.close()
+
+    telegram_user = update.effective_user
+    username = (
+        f"@{telegram_user.username}"
+        if telegram_user.username
+        else "No username"
+    )
+
+    owner_text = (
+        "💸 <b>NEW REAL MONEY WITHDRAWAL</b>\n\n"
+        f"👤 <b>User:</b> {html.escape(telegram_user.full_name)}\n"
+        f"🔗 <b>Username:</b> {html.escape(username)}\n"
+        f"🆔 <b>Telegram ID:</b> <code>{user_id}</code>\n"
+        f"💰 <b>Requested Balance:</b> <code>{amount}</code>\n"
+        f"🎫 <b>Request ID:</b> <code>{request_id}</code>\n\n"
+        "⚠️ Verify the payment details before approving."
+    )
+
+    admin_keyboard = [[
+        InlineKeyboardButton(
+            "✅ Mark Paid",
+            callback_data=f"rm_paid_{request_id}",
+        ),
+        InlineKeyboardButton(
+            "❌ Reject",
+            callback_data=f"rm_reject_{request_id}",
+        ),
+    ]]
+
+    try:
+        if qr_file_id:
+            await context.bot.send_photo(
+                chat_id=OWNER_ID,
+                photo=qr_file_id,
+                caption=owner_text,
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(admin_keyboard),
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=OWNER_ID,
+                text=owner_text + f"\n📲 <b>UPI ID:</b> <code>{html.escape(upi_id)}</code>",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(admin_keyboard),
+            )
+
+        await update.message.reply_text(
+            "✅ <b>Withdrawal request submitted.</b>\n\n"
+            "Your request has been sent for manual verification.",
+            parse_mode="HTML",
+        )
+
+    except Exception as e:
+        print(f"❌ Withdrawal owner notification failed: {e}")
+
+        conn = sqlite3.connect("hrishu.db")
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE real_money_withdrawals
+            SET status = 'rejected', processed_at = ?
+            WHERE id = ? AND status = 'pending'
+            """,
+            (int(time.time()), request_id),
+        )
+        conn.commit()
+        conn.close()
+
+        await update.message.reply_text(
+            "⚠️ Your withdrawal request could not be submitted.\n"
+            "Your balance was not deducted."
+        )
+
+    context.user_data.pop("rm_withdraw", None)
+    return ConversationHandler.END
+
+
+async def real_money_withdraw_cancel(update, context):
+    query = update.callback_query
+
+    if query:
+        await query.answer("Cancelled.")
+
+        if query.message:
+            await query.message.reply_text(
+                "❌ Withdrawal cancelled."
+            )
+
+    context.user_data.pop("rm_withdraw", None)
+    return ConversationHandler.END
+
+
+async def real_money_withdraw_admin(update, context):
+    query = update.callback_query
+
+    if not query:
+        return
+
+    if not update.effective_user or update.effective_user.id != OWNER_ID:
+        await query.answer(
+            "Only the owner can process withdrawals.",
+            show_alert=True,
+        )
+        return
+
+    await query.answer()
+
+    data = query.data or ""
+
+    if data.startswith("rm_paid_"):
+        request_id = int(data.removeprefix("rm_paid_"))
+        action = "paid"
+    elif data.startswith("rm_reject_"):
+        request_id = int(data.removeprefix("rm_reject_"))
+        action = "rejected"
+    else:
+        return
+
+    conn = sqlite3.connect("hrishu.db")
+
+    try:
+        cur = conn.cursor()
+        cur.execute("BEGIN IMMEDIATE")
+
+        cur.execute(
+            """
+            SELECT user_id, amount, status
+            FROM real_money_withdrawals
+            WHERE id = ?
+            """,
+            (request_id,),
+        )
+        row = cur.fetchone()
+
+        if not row:
+            conn.rollback()
+            await query.message.reply_text("❌ Withdrawal request not found.")
+            return
+
+        user_id, amount, status = row
+
+        if status != "pending":
+            conn.rollback()
+            await query.message.reply_text(
+                f"ℹ️ This request is already {status}."
+            )
+            return
+
+        if action == "paid":
+            cur.execute(
+                """
+                UPDATE real_money_wallets
+                SET gold = gold - ?
+                WHERE user_id = ? AND gold >= ?
+                """,
+                (amount, user_id, amount),
+            )
+
+            if cur.rowcount != 1:
+                conn.rollback()
+                await query.message.reply_text(
+                    "❌ User no longer has enough balance."
+                )
+                return
+
+        cur.execute(
+            """
+            UPDATE real_money_withdrawals
+            SET status = ?, processed_at = ?
+            WHERE id = ? AND status = 'pending'
+            """,
+            (action, int(time.time()), request_id),
+        )
+
+        conn.commit()
+
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        conn.close()
+
+    if action == "paid":
+        await query.message.edit_reply_markup(reply_markup=None)
+
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=(
+                "✅ <b>Withdrawal approved.</b>\n\n"
+                f"💰 Balance withdrawn: <b>{amount}</b>\n"
+                "💳 Your payment will be handled manually."
+            ),
+            parse_mode="HTML",
+        )
+
+        await query.message.reply_text(
+            f"✅ Request <code>{request_id}</code> marked as paid.",
+            parse_mode="HTML",
+        )
+
+    else:
+        await query.message.edit_reply_markup(reply_markup=None)
+
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=(
+                "❌ <b>Your withdrawal request was rejected.</b>\n\n"
+                "Your balance was not deducted."
+            ),
+            parse_mode="HTML",
+        )
+
+        await query.message.reply_text(
+            f"❌ Request <code>{request_id}</code> rejected.",
+            parse_mode="HTML",
+        )
+
+
+async def real_money_bot_added(update, context):
+    member_update = update.my_chat_member
+
+    if not member_update:
+        return
+
+    chat = update.effective_chat
+    actor = member_update.from_user
+    old_member = member_update.old_chat_member
+    new_member = member_update.new_chat_member
+
+    if not chat or chat.type not in ("group", "supergroup"):
+        return
+
+    if not actor or actor.is_bot:
+        return
+
+    old_status = old_member.status
+    new_status = new_member.status
+
+    # Only count a real addition of the bot.
+    if old_status not in ("left", "kicked"):
+        return
+
+    if new_status not in ("member", "administrator", "restricted"):
+        return
+
+    now = int(time.time())
+
+    if not real_money_event_active(now):
+        return
+
+    user_id = actor.id
+    chat_id = chat.id
+
+    conn = sqlite3.connect("hrishu.db")
+
+    try:
+        cur = conn.cursor()
+
+        cur.execute("BEGIN IMMEDIATE")
+
+        # One claim per user + group + event.
+        cur.execute(
+            """
+            INSERT OR IGNORE INTO real_money_claims
+            (event_id, user_id, chat_id, claimed_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                REAL_MONEY_EVENT_ID,
+                user_id,
+                chat_id,
+                now,
+            ),
+        )
+
+        if cur.rowcount != 1:
+            conn.rollback()
+            return
+
+        cur.execute(
+            """
+            INSERT OR IGNORE INTO real_money_wallets(user_id, gold)
+            VALUES (?, 0)
+            """,
+            (user_id,),
+        )
+
+        cur.execute(
+            """
+            UPDATE real_money_wallets
+            SET gold = gold + ?
+            WHERE user_id = ?
+            """,
+            (REAL_MONEY_REWARD, user_id),
+        )
+
+        conn.commit()
+
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        conn.close()
+
+    try:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                f"🎉 <b>{actor.first_name}</b> earned "
+                f"<b>+{REAL_MONEY_REWARD} Gold</b>!\n\n"
+                "💵 Real Money Event reward credited successfully."
+            ),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        print(f"❌ Real money reward notification failed: {e}")
+
+
 async def global_error_handler(update, context):
     import traceback
     print("=== GLOBAL ERROR HANDLER CAUGHT AN EXCEPTION ===")
     traceback.print_exception(type(context.error), context.error, context.error.__traceback__)
     print("=== END ERROR ===")
+
+
+
+
+async def pfp_shop_callback(update, context):
+    query = update.callback_query
+
+    if not query:
+        return
+
+    import sqlite3
+    from pathlib import Path
+    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+
+    parts = (query.data or "").split(":")
+
+    if len(parts) != 4:
+        await query.answer()
+        return
+
+    action = parts[1]
+
+    try:
+        owner_id = int(parts[2])
+    except ValueError:
+        await query.answer()
+        return
+
+    pfp_id = parts[3]
+
+    if update.effective_user.id != owner_id:
+        await query.answer(
+            "❌ This is not your PFP shop.",
+            show_alert=True,
+        )
+        return
+
+    ensure_pfp_db()
+    ensure_pfp_ownership_db()
+
+    db_path = Path(__file__).with_name("hrishu.db")
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+
+    try:
+        pfp = conn.execute(
+            """
+            SELECT pfp_id, title, price
+            FROM hrishu_pfps
+            WHERE pfp_id = ?
+            LIMIT 1
+            """,
+            (pfp_id,)
+        ).fetchone()
+
+        if not pfp:
+            await query.answer(
+                "❌ PFP not found.",
+                show_alert=True,
+            )
+            return
+
+        if action == "buy":
+
+            owned = conn.execute(
+                """
+                SELECT 1
+                FROM hrishu_pfp_owned
+                WHERE user_id = ?
+                  AND pfp_id = ?
+                """,
+                (owner_id, pfp_id)
+            ).fetchone()
+
+            if owned:
+                await query.answer(
+                    "✅ Already purchased."
+                )
+            else:
+                price = int(pfp["price"])
+
+                result = conn.execute(
+                    """
+                    UPDATE users
+                    SET coins = coins - ?
+                    WHERE user_id = ?
+                      AND coins >= ?
+                    """,
+                    (price, owner_id, price)
+                )
+
+                if result.rowcount == 0:
+                    await query.answer(
+                        f"❌ You need {price:,} coins.",
+                        show_alert=True,
+                    )
+                    return
+
+                import time
+
+                conn.execute(
+                    """
+                    INSERT INTO hrishu_pfp_owned
+                    (user_id, pfp_id, purchased_at)
+                    VALUES (?, ?, ?)
+                    """,
+                    (owner_id, pfp_id, int(time.time()))
+                )
+
+                conn.commit()
+
+                await query.answer(
+                    "✅ PFP purchased!",
+                    show_alert=True,
+                )
+
+        elif action == "equip":
+
+            owned = conn.execute(
+                """
+                SELECT 1
+                FROM hrishu_pfp_owned
+                WHERE user_id = ?
+                  AND pfp_id = ?
+                """,
+                (owner_id, pfp_id)
+            ).fetchone()
+
+            if not owned:
+                await query.answer(
+                    "❌ Buy this PFP first.",
+                    show_alert=True,
+                )
+                return
+
+            conn.execute(
+                """
+                INSERT INTO hrishu_pfp_equipped
+                (user_id, pfp_id)
+                VALUES (?, ?)
+                ON CONFLICT(user_id)
+                DO UPDATE SET pfp_id = excluded.pfp_id
+                """,
+                (owner_id, pfp_id)
+            )
+
+            conn.commit()
+
+            await query.answer(
+                "✅ PFP equipped!",
+                show_alert=True,
+            )
+
+        else:
+            await query.answer()
+            return
+
+        # ----------------------------------------------------
+        # Refresh every PFP button in this opened shop.
+        # ----------------------------------------------------
+
+        owned_rows = conn.execute(
+            """
+            SELECT pfp_id
+            FROM hrishu_pfp_owned
+            WHERE user_id = ?
+            """,
+            (owner_id,)
+        ).fetchall()
+
+        owned_set = {row["pfp_id"] for row in owned_rows}
+
+        equipped_row = conn.execute(
+            """
+            SELECT pfp_id
+            FROM hrishu_pfp_equipped
+            WHERE user_id = ?
+            LIMIT 1
+            """,
+            (owner_id,)
+        ).fetchone()
+
+        equipped_id = (
+            equipped_row["pfp_id"]
+            if equipped_row
+            else None
+        )
+
+        price = int(pfp["price"])
+
+        # Update all PFP messages stored by /shoppfp
+        for item in context.user_data.get("pfp_shop_messages", []):
+            try:
+                item_pfp_id = item["pfp_id"]
+                row = conn.execute(
+                    """
+                    SELECT price
+                    FROM hrishu_pfps
+                    WHERE pfp_id = ?
+                    """,
+                    (item_pfp_id,)
+                ).fetchone()
+
+                if not row:
+                    continue
+
+                item_price = int(row["price"])
+
+                buy_text = (
+                    "✅ Purchased"
+                    if item_pfp_id in owned_set
+                    else f"💰 Buy {item_price:,}"
+                )
+
+                equip_text = (
+                    "✅ Equipped"
+                    if item_pfp_id == equipped_id
+                    else "⚡ Equip"
+                )
+
+                markup = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(
+                            buy_text,
+                            callback_data=(
+                                f"pfpshop:buy:"
+                                f"{owner_id}:{item_pfp_id}"
+                            ),
+                        ),
+                        InlineKeyboardButton(
+                            equip_text,
+                            callback_data=(
+                                f"pfpshop:equip:"
+                                f"{owner_id}:{item_pfp_id}"
+                            ),
+                        ),
+                    ]
+                ])
+
+                await context.bot.edit_message_reply_markup(
+                    chat_id=item["chat_id"],
+                    message_id=item["message_id"],
+                    reply_markup=markup,
+                )
+
+            except Exception:
+                pass
+
+    finally:
+        conn.close()
+
+
+async def shoppfp_command(update, context):
+    if not update.message:
+        return
+
+    import sqlite3
+    import html
+    from pathlib import Path
+    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+
+    ensure_pfp_db()
+    ensure_pfp_ownership_db()
+
+    user_id = update.effective_user.id
+
+    db_path = Path(__file__).with_name("hrishu.db")
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+
+    try:
+        pfps = conn.execute("""
+            SELECT pfp_id, title, price, file_id, media_type
+            FROM hrishu_pfps
+            WHERE file_id IS NOT NULL
+              AND file_id != ''
+            ORDER BY CAST(SUBSTR(pfp_id, 4) AS INTEGER)
+        """).fetchall()
+    finally:
+        conn.close()
+
+    if not pfps:
+        await update.message.reply_text(
+            "🛍️ <b>ʜʀɪѕʜᴜ ᴘꜰᴘ ꜱʜᴏᴘ</b>\n\n"
+            "❌ No PFPs are available yet.",
+            parse_mode="HTML",
+        )
+        return
+
+    context.user_data["pfp_shop_page"] = 0
+
+    await send_pfp_shop_page(
+        update,
+        context,
+        user_id,
+        0,
+        pfps,
+    )
+
+
+async def send_pfp_shop_page(update, context, user_id, page, pfps=None):
+    import sqlite3
+    import html
+    from pathlib import Path
+    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+
+    if pfps is None:
+        db_path = Path(__file__).with_name("hrishu.db")
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+
+        try:
+            pfps = conn.execute("""
+                SELECT pfp_id, title, price, file_id, media_type
+                FROM hrishu_pfps
+                WHERE file_id IS NOT NULL
+                  AND file_id != ''
+                ORDER BY CAST(SUBSTR(pfp_id, 4) AS INTEGER)
+            """).fetchall()
+        finally:
+            conn.close()
+
+    per_page = 5
+    total = len(pfps)
+    max_page = max(0, (total - 1) // per_page)
+
+    page = max(0, min(page, max_page))
+
+    start = page * per_page
+    end = start + per_page
+    page_pfps = pfps[start:end]
+
+    db_path = Path(__file__).with_name("hrishu.db")
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+
+    try:
+        owned_rows = conn.execute("""
+            SELECT pfp_id
+            FROM hrishu_pfp_owned
+            WHERE user_id = ?
+        """, (user_id,)).fetchall()
+
+        equipped_row = conn.execute("""
+            SELECT pfp_id
+            FROM hrishu_pfp_equipped
+            WHERE user_id = ?
+            LIMIT 1
+        """, (user_id,)).fetchone()
+    finally:
+        conn.close()
+
+    owned = {row["pfp_id"] for row in owned_rows}
+    equipped_id = equipped_row["pfp_id"] if equipped_row else None
+
+    # Delete old shop messages when changing page
+    old_messages = context.user_data.get("pfp_shop_messages", [])
+
+    for item in old_messages:
+        try:
+            await context.bot.delete_message(
+                chat_id=item["chat_id"],
+                message_id=item["message_id"],
+            )
+        except Exception:
+            pass
+
+    context.user_data["pfp_shop_messages"] = []
+    context.user_data["pfp_shop_page"] = page
+
+    # Header only on first page
+    if page == 0:
+        header = await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=(
+                "🛍️ <b>ʜʀɪѕʜᴜ ᴘꜰᴘ ꜱʜᴏᴘ</b>\n\n"
+                "💰 Buy PFPs with your in-game coins.\n"
+                "⚡ Buy first, then equip the PFP you want.\n\n"
+                f"📄 Page <b>{page + 1}/{max_page + 1}</b>"
+            ),
+            parse_mode="HTML",
+        )
+
+        context.user_data["pfp_shop_messages"].append({
+            "chat_id": update.effective_chat.id,
+            "message_id": header.message_id,
+        })
+
+    for index, pfp in enumerate(page_pfps):
+        pfp_id = pfp["pfp_id"]
+        price = int(pfp["price"])
+
+        if pfp_id in owned:
+            buy_text = "✅ Purchased"
+        else:
+            buy_text = f"💰 Buy {price:,}"
+
+        if pfp_id == equipped_id:
+            equip_text = "✅ Equipped"
+        else:
+            equip_text = "⚡ Equip"
+
+        keyboard_rows = [
+            [
+                InlineKeyboardButton(
+                    buy_text,
+                    callback_data=f"pfpshop:buy:{user_id}:{pfp_id}",
+                ),
+                InlineKeyboardButton(
+                    equip_text,
+                    callback_data=f"pfpshop:equip:{user_id}:{pfp_id}",
+                ),
+            ]
+        ]
+
+        # Navigation buttons on the LAST PFP of the page
+        if index == len(page_pfps) - 1:
+            navigation = []
+
+            if page > 0:
+                navigation.append(
+                    InlineKeyboardButton(
+                        "⬅️ Previous",
+                        callback_data=f"pfpshop:page:{user_id}:{page - 1}",
+                    )
+                )
+
+            if page < max_page:
+                navigation.append(
+                    InlineKeyboardButton(
+                        "Next ➡️",
+                        callback_data=f"pfpshop:page:{user_id}:{page + 1}",
+                    )
+                )
+
+            if navigation:
+                keyboard_rows.append(navigation)
+
+        keyboard = InlineKeyboardMarkup(keyboard_rows)
+
+        caption = (
+            f"🖼️ <b>{html.escape(str(pfp['title']))}</b>\n"
+            f"💰 Price: <b>{price:,} coins</b>\n"
+            f"📦 PFP {start + index + 1}/{total}"
+        )
+
+        if pfp["media_type"] == "video":
+            msg = await context.bot.send_video(
+                chat_id=update.effective_chat.id,
+                video=pfp["file_id"],
+                caption=caption,
+                reply_markup=keyboard,
+                parse_mode="HTML",
+                supports_streaming=True,
+            )
+        else:
+            msg = await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=pfp["file_id"],
+                caption=caption,
+                reply_markup=keyboard,
+                parse_mode="HTML",
+            )
+
+        context.user_data["pfp_shop_messages"].append({
+            "chat_id": update.effective_chat.id,
+            "message_id": msg.message_id,
+            "pfp_id": pfp_id,
+        })
+
+
+async def pfp_shop_callback(update, context):
+    query = update.callback_query
+
+    if not query:
+        return
+
+    import sqlite3
+    import time
+    from pathlib import Path
+    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+
+    parts = (query.data or "").split(":")
+
+    if len(parts) != 4:
+        return
+
+    action = parts[1]
+
+    try:
+        owner_id = int(parts[2])
+    except ValueError:
+        await query.answer("❌ Invalid shop.", show_alert=True)
+        return
+
+    value = parts[3]
+
+    if update.effective_user.id != owner_id:
+        await query.answer(
+            "❌ This is not your PFP shop.",
+            show_alert=True,
+        )
+        return
+
+    ensure_pfp_db()
+    ensure_pfp_ownership_db()
+
+    # ========================================================
+    # PAGE NAVIGATION
+    # ========================================================
+
+    if action == "page":
+        try:
+            page = int(value)
+        except ValueError:
+            await query.answer("❌ Invalid page.")
+            return
+
+        db_path = Path(__file__).with_name("hrishu.db")
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+
+        try:
+            pfps = conn.execute("""
+                SELECT pfp_id, title, price, file_id, media_type
+                FROM hrishu_pfps
+                WHERE file_id IS NOT NULL
+                  AND file_id != ''
+                ORDER BY CAST(SUBSTR(pfp_id, 4) AS INTEGER)
+            """).fetchall()
+        finally:
+            conn.close()
+
+        await query.answer()
+
+        await send_pfp_shop_page(
+            update,
+            context,
+            owner_id,
+            page,
+            pfps,
+        )
+
+        return
+
+    # ========================================================
+    # BUY / EQUIP
+    # ========================================================
+
+    pfp_id = value
+
+    db_path = Path(__file__).with_name("hrishu.db")
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+
+    try:
+        pfp = conn.execute("""
+            SELECT pfp_id, title, price
+            FROM hrishu_pfps
+            WHERE pfp_id = ?
+            LIMIT 1
+        """, (pfp_id,)).fetchone()
+
+        if not pfp:
+            await query.answer(
+                "❌ PFP not found.",
+                show_alert=True,
+            )
+            return
+
+        if action == "buy":
+
+            owned = conn.execute("""
+                SELECT 1
+                FROM hrishu_pfp_owned
+                WHERE user_id = ?
+                  AND pfp_id = ?
+            """, (owner_id, pfp_id)).fetchone()
+
+            if owned:
+                await query.answer(
+                    "✅ You already own this PFP."
+                )
+                return
+
+            price = int(pfp["price"])
+
+            result = conn.execute("""
+                UPDATE users
+                SET coins = coins - ?
+                WHERE user_id = ?
+                  AND coins >= ?
+            """, (price, owner_id, price))
+
+            if result.rowcount == 0:
+                await query.answer(
+                    f"❌ You need {price:,} coins.",
+                    show_alert=True,
+                )
+                return
+
+            conn.execute("""
+                INSERT INTO hrishu_pfp_owned
+                (user_id, pfp_id, purchased_at)
+                VALUES (?, ?, ?)
+            """, (
+                owner_id,
+                pfp_id,
+                int(time.time()),
+            ))
+
+            conn.commit()
+
+            await query.answer(
+                "✅ PFP purchased!",
+                show_alert=True,
+            )
+
+        elif action == "equip":
+
+            owned = conn.execute("""
+                SELECT 1
+                FROM hrishu_pfp_owned
+                WHERE user_id = ?
+                  AND pfp_id = ?
+            """, (owner_id, pfp_id)).fetchone()
+
+            if not owned:
+                await query.answer(
+                    "❌ Buy this PFP first.",
+                    show_alert=True,
+                )
+                return
+
+            conn.execute("""
+                INSERT INTO hrishu_pfp_equipped
+                (user_id, pfp_id)
+                VALUES (?, ?)
+                ON CONFLICT(user_id)
+                DO UPDATE SET pfp_id = excluded.pfp_id
+            """, (owner_id, pfp_id))
+
+            conn.commit()
+
+            await query.answer(
+                "✅ PFP equipped!",
+                show_alert=True,
+            )
+
+        else:
+            return
+
+        # ====================================================
+        # REFRESH CURRENT PFP BUTTONS
+        # ====================================================
+
+        owned = conn.execute("""
+            SELECT 1
+            FROM hrishu_pfp_owned
+            WHERE user_id = ?
+              AND pfp_id = ?
+        """, (owner_id, pfp_id)).fetchone()
+
+        equipped = conn.execute("""
+            SELECT pfp_id
+            FROM hrishu_pfp_equipped
+            WHERE user_id = ?
+            LIMIT 1
+        """, (owner_id,)).fetchone()
+
+        buy_text = (
+            "✅ Purchased"
+            if owned
+            else f"💰 Buy {int(pfp['price']):,}"
+        )
+
+        equip_text = (
+            "✅ Equipped"
+            if equipped and equipped["pfp_id"] == pfp_id
+            else "⚡ Equip"
+        )
+
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    buy_text,
+                    callback_data=f"pfpshop:buy:{owner_id}:{pfp_id}",
+                ),
+                InlineKeyboardButton(
+                    equip_text,
+                    callback_data=f"pfpshop:equip:{owner_id}:{pfp_id}",
+                ),
+            ]
+        ])
+
+        await query.edit_message_reply_markup(
+            reply_markup=keyboard
+        )
+
+    finally:
+        conn.close()
+
+async def pfp_command(update, context):
+    if not update.message:
+        return
+
+    import sqlite3
+    import html
+    from pathlib import Path
+
+    ensure_pfp_db()
+    ensure_pfp_ownership_db()
+
+    target = update.effective_user
+
+    if update.message.reply_to_message:
+        target = update.message.reply_to_message.from_user
+
+    db_path = Path(__file__).with_name("hrishu.db")
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+
+    try:
+        user = conn.execute(
+            "SELECT * FROM users WHERE user_id = ?",
+            (target.id,)
+        ).fetchone()
+
+        # Global XP rank — higher XP = better rank
+        global_rank = conn.execute(
+            """
+            SELECT COUNT(*) + 1
+            FROM users
+            WHERE xp > ?
+            """,
+            (user["xp"],)
+        ).fetchone()[0]
+
+        if not user:
+            await update.message.reply_text(
+                "❌ This player hasn't started Hrishu yet."
+            )
+            return
+
+        owned_count = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM hrishu_pfp_owned
+            WHERE user_id = ?
+            """,
+            (target.id,)
+        ).fetchone()[0]
+
+        equipped = conn.execute(
+            """
+            SELECT p.pfp_id, p.title, p.file_id, p.media_type
+            FROM hrishu_pfp_equipped e
+            JOIN hrishu_pfps p
+              ON p.pfp_id = e.pfp_id
+            WHERE e.user_id = ?
+            LIMIT 1
+            """,
+            (target.id,)
+        ).fetchone()
+
+    finally:
+        conn.close()
+
+    player_name = user["first_name"] or user["username"] or "Player"
+
+    if owned_count == 0:
+        if target.id == update.effective_user.id:
+            await update.message.reply_text(
+                "❌ <b>You don't own a PFP yet.</b>\n\n"
+                "🛍️ Use <code>/shoppfp</code> to buy one.",
+                parse_mode="HTML",
+            )
+        else:
+            await update.message.reply_text(
+                f"❌ <b>{html.escape(str(player_name))}</b> "
+                "doesn't own a PFP yet.",
+                parse_mode="HTML",
+            )
+        return
+
+    if not equipped:
+        await update.message.reply_text(
+            f"💙 <b>ʜʀɪѕʜᴜ ᴘʀᴏꜰɪʟᴇ</b>\n\n"
+            f"👤 <b>{html.escape(str(player_name))}</b>\n"
+            f"🆔 ID: <code>{html.escape(str(user['hrishu_id']))}</code>\n\n"
+            "🖼️ <b>PFP:</b> Not equipped\n\n"
+            f"⭐ XP: <b>{user['xp']:,}</b>\n"
+            f"⭐ XP Global Rank: <b>#{global_rank}</b>\n"
+            f"💰 Rich Global Rank: <b>#{get_global_rich_rank(target.id)}</b>\n"
+            f"📈 Level: <b>{user['level']}</b>\n"
+            f"❤️ HP: <b>{user['hp']}/{user['max_hp']}</b>"
+    ,
+            parse_mode="HTML",
+        )
+        return
+
+    caption = (
+        f"💙 <b>ʜʀɪѕʜᴜ ᴘʀᴏꜰɪʟᴇ</b>\n\n"
+        f"👤 <b>{html.escape(str(player_name))}</b>\n"
+        f"🆔 ID: <code>{html.escape(str(user['hrishu_id']))}</code>\n\n"
+        f"🖼️ <b>PFP:</b> {html.escape(str(equipped['title']))}\n"
+        f"🆔 PFP ID: <code>{html.escape(str(equipped['pfp_id']))}</code>\n\n"
+        f"⭐ XP: <b>{user['xp']:,}</b>\n"
+        f"⭐ XP Global Rank: <b>#{global_rank}</b>\n"
+            f"💰 Rich Global Rank: <b>#{get_global_rich_rank(target.id)}</b>\n"
+        f"📈 Level: <b>{user['level']}</b>\n"
+        f"❤️ HP: <b>{user['hp']}/{user['max_hp']}</b>"
+
+    )
+
+    if equipped["media_type"] == "video":
+        await update.message.reply_video(
+            video=equipped["file_id"],
+            caption=caption,
+            parse_mode="HTML",
+            supports_streaming=True,
+        )
+    else:
+        await update.message.reply_photo(
+            photo=equipped["file_id"],
+            caption=caption,
+            parse_mode="HTML",
+        )
+
+def ensure_pfp_ownership_db():
+    import sqlite3
+    from pathlib import Path
+
+    db_path = Path(__file__).with_name("hrishu.db")
+    conn = sqlite3.connect(db_path)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS hrishu_pfp_owned (
+            user_id INTEGER NOT NULL,
+            pfp_id TEXT NOT NULL,
+            purchased_at INTEGER NOT NULL,
+            PRIMARY KEY (user_id, pfp_id)
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS hrishu_pfp_equipped (
+            user_id INTEGER PRIMARY KEY,
+            pfp_id TEXT NOT NULL
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+
+async def back_xp_leaderboard_callback(update, context):
+    query = update.callback_query
+
+    if not query:
+        return
+
+    import sqlite3
+
+    conn = sqlite3.connect("hrishu.db")
+    conn.row_factory = sqlite3.Row
+
+    users = conn.execute("""
+        SELECT first_name, username, xp, level
+        FROM users
+        WHERE hrishu_id != '69988'
+        ORDER BY xp DESC
+        LIMIT 12
+    """).fetchall()
+
+    conn.close()
+
+    text = (
+        "🏆 <b>HRISHU LEGENDS</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "        ⚔️ <b>TOP 12</b> ⚔️\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+    )
+
+    for index, player in enumerate(users, 1):
+        name = player["first_name"] or player["username"] or "Unknown"
+        text += (
+            f"⚔️ <b>#{index}</b> {name}\n"
+            f"     ⭐ {player['xp']:,} XP  •  🔥 Lv. {player['level']}\n\n"
+        )
+
+    text += "━━━━━━━━━━━━━━━━━━━━"
+
+    await query.answer()
+
+    await query.edit_message_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "💰 Richest Players",
+                    callback_data="rich_leaderboard",
+                )
+            ]
+        ]),
+    )
+
+
+
+
+def get_global_xp_rank(user_id):
+    """Return the player's global rank by XP."""
+    import sqlite3
+
+    conn = sqlite3.connect("hrishu.db")
+
+    row = conn.execute(
+        "SELECT xp FROM users WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+
+    if not row:
+        conn.close()
+        return None
+
+    xp = int(row[0] or 0)
+
+    rank = conn.execute(
+        """
+        SELECT COUNT(*) + 1
+        FROM users
+        WHERE xp > ?
+        """,
+        (xp,),
+    ).fetchone()[0]
+
+    conn.close()
+    return rank
+
+
+def get_global_rich_rank(user_id):
+    """Return the player's global rank by coins."""
+    import sqlite3
+
+    conn = sqlite3.connect("hrishu.db")
+    row = conn.execute(
+        "SELECT coins FROM users WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+
+    if not row:
+        conn.close()
+        return None
+
+    coins = int(row[0] or 0)
+
+    rank = conn.execute(
+        """
+        SELECT COUNT(*) + 1
+        FROM users
+        WHERE coins > ?
+        """,
+        (coins,),
+    ).fetchone()[0]
+
+    conn.close()
+    return rank
+
+
+# ==================== 6-HOUR PRIVATE DM ACTIVITY ====================
+
+DM_ACTIVITY_TTL = 6 * 60 * 60
+
+def init_dm_activity_db():
+    conn = sqlite3.connect("hrishu.db")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS dm_activity (
+            user_id INTEGER PRIMARY KEY,
+            first_name TEXT,
+            username TEXT,
+            last_seen INTEGER NOT NULL
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def cleanup_dm_activity():
+    cutoff = int(time.time()) - DM_ACTIVITY_TTL
+    conn = sqlite3.connect("hrishu.db")
+    conn.execute(
+        "DELETE FROM dm_activity WHERE last_seen < ?",
+        (cutoff,)
+    )
+    conn.commit()
+    conn.close()
+
+
+async def track_dm_activity(update, context):
+    try:
+        user = update.effective_user
+        chat = update.effective_chat
+
+        if not user or not chat:
+            return
+
+        # Only private DMs
+        if chat.type != "private":
+            return
+
+        # Ignore Telegram bots
+        if user.is_bot:
+            return
+
+        now = int(time.time())
+
+        conn = sqlite3.connect("hrishu.db")
+
+        # Remove expired users first
+        conn.execute(
+            "DELETE FROM dm_activity WHERE last_seen < ?",
+            (now - DM_ACTIVITY_TTL,)
+        )
+
+        conn.execute("""
+            INSERT INTO dm_activity
+                (user_id, first_name, username, last_seen)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                first_name = excluded.first_name,
+                username = excluded.username,
+                last_seen = excluded.last_seen
+        """, (
+            user.id,
+            user.first_name or "",
+            user.username or "",
+            now
+        ))
+
+        conn.commit()
+        conn.close()
+
+    except Exception as e:
+        print(f"[DM ACTIVITY] {e}")
+
+
+def _dm_time_ago(seconds):
+    seconds = max(0, int(seconds))
+
+    if seconds < 60:
+        return "just now"
+
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+
+    hours = minutes // 60
+    minutes %= 60
+
+    if hours < 24:
+        if minutes:
+            return f"{hours}h {minutes}m ago"
+        return f"{hours}h ago"
+
+    days = hours // 24
+    hours %= 24
+
+    if hours:
+        return f"{days}d {hours}h ago"
+    return f"{days}d ago"
+
+
+async def dm6h(update, context):
+    user = update.effective_user
+
+    if not user or user.id != OWNER_ID:
+        return
+
+    cleanup_dm_activity()
+
+    conn = sqlite3.connect("hrishu.db")
+    rows = conn.execute("""
+        SELECT user_id, first_name, username, last_seen
+        FROM dm_activity
+        ORDER BY last_seen DESC
+    """).fetchall()
+    conn.close()
+
+    if not rows:
+        await update.message.reply_text(
+            "📭 No users have used the bot in private DM during the last 6 hours."
+        )
+        return
+
+    now = int(time.time())
+
+    lines = [
+        "👥 PRIVATE DM USERS — LAST 6 HOURS",
+        f"Total active: {len(rows)}",
+        ""
+    ]
+
+    for i, (user_id, first_name, username, last_seen) in enumerate(rows, 1):
+        name = first_name or "Unknown"
+        uname = f"@{username}" if username else "@-"
+        ago = _dm_time_ago(now - last_seen)
+
+        lines.append(
+            f"{i}. {name}\n"
+            f"   {uname}\n"
+            f"   ID: {user_id}\n"
+            f"   Last activity: {ago}"
+        )
+
+    await update.message.reply_text("\n".join(lines))
+
+
+async def dm_activity_cleanup_loop(application):
+    while True:
+        try:
+            cleanup_dm_activity()
+        except Exception as e:
+            print(f"[DM CLEANUP] {e}")
+
+        # Check every minute for users whose 6h window expired.
+        await asyncio.sleep(60)
+
+
+async def dm_post_init(application):
+    await event_post_init(application)
+    application.create_task(dm_activity_cleanup_loop(application))
+
+
+# ==================== END 6-HOUR PRIVATE DM ACTIVITY ====================
 
 def main():
     init_event_db()
@@ -9769,17 +13776,52 @@ def main():
     init_pokemon_db()
     init_ai_memory_db()
     init_premium_db()
+    init_real_money_db()
+    init_dm_activity_db()
 
     application = (
         Application.builder()
         .token(BOT_TOKEN)
-        .post_init(event_post_init)
+        .post_init(dm_post_init)
         .build()
+    )
+
+    # Track every private DM message.
+    # group=-10 makes this run before normal message handlers.
+    application.add_handler(
+        MessageHandler(
+            filters.ChatType.PRIVATE,
+            track_dm_activity,
+            block=False,
+        ),
+        group=-10,
+    )
+
+    application.add_handler(
+        CommandHandler("dm6h", dm6h)
     )
 
     # General
     application.add_handler(
         CommandHandler("start", start)
+    )
+    application.add_handler(
+        CommandHandler("admin", admin_command)
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            admin_pfp_callback,
+            pattern=r"^admin_pfp",
+        ),
+        group=-3,
+    )
+
+    application.add_handler(
+        MessageHandler(
+            filters.ALL,
+            handle_admin_pfp_message,
+        ),
+        group=-3,
     )
     application.add_handler(
         CommandHandler("fakechallenge", fake_global_challenge)
@@ -9819,7 +13861,7 @@ def main():
         CommandHandler("stars", stars_command)
     )
     application.add_handler(
-        CallbackQueryHandler(button_handler)
+        CallbackQueryHandler(button_handler, pattern=r"^(?!admin_pfp)")
     )
     application.add_handler(
         PreCheckoutQueryHandler(precheckout_premium)
@@ -9841,6 +13883,88 @@ def main():
     application.add_handler(
         CommandHandler("paysupport", paysupport)
     )
+
+    application.add_handler(
+        CommandHandler("gamesupport", gamesupport)
+    )
+
+    application.add_handler(
+        CommandHandler("getrealmoney", get_real_money)
+    )
+
+    application.add_handler(
+        CallbackQueryHandler(
+            get_real_money,
+            pattern=r"^rm_refresh$",
+        )
+    )
+
+    application.add_handler(
+        ConversationHandler(
+            entry_points=[
+                CallbackQueryHandler(
+                    real_money_withdraw_start,
+                    pattern=r"^rm_withdraw$",
+                )
+            ],
+            states={
+                RM_WITHDRAW_AMOUNT: [
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND,
+                        real_money_withdraw_amount,
+                    ),
+                    CallbackQueryHandler(
+                        real_money_withdraw_cancel,
+                        pattern=r"^rm_cancel$",
+                    ),
+                ],
+                RM_WITHDRAW_PAYMENT: [
+                    MessageHandler(
+                        (filters.TEXT & ~filters.COMMAND) | filters.PHOTO,
+                        real_money_withdraw_payment,
+                    ),
+                    CallbackQueryHandler(
+                        real_money_withdraw_cancel,
+                        pattern=r"^rm_cancel$",
+                    ),
+                ],
+            },
+            fallbacks=[
+                CallbackQueryHandler(
+                    real_money_withdraw_cancel,
+                    pattern=r"^rm_cancel$",
+                )
+            ],
+            per_user=True,
+            per_chat=True,
+        ),
+        group=-2,
+    )
+
+
+    application.add_handler(
+        CallbackQueryHandler(
+            real_money_withdraw_admin,
+            pattern=r"^rm_(paid|reject)_\\d+$",
+        ),
+        group=-3,
+    )
+
+    application.add_handler(
+        CallbackQueryHandler(
+            gamesupport_callback,
+            pattern=r"^gs_",
+        ),
+        group=-2,
+    )
+    application.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            handle_gamesupport_message,
+        ),
+        group=0,
+    )
+
     application.add_handler(
         CommandHandler("ask", ask)
     )
@@ -9852,6 +13976,12 @@ def main():
     )
 
     # Profile
+    application.add_handler(
+        CommandHandler("pfp", pfp_command)
+    )
+    application.add_handler(
+        CommandHandler("shoppfp", shoppfp_command)
+    )
     application.add_handler(
         CommandHandler("profile", profile)
     )
@@ -9922,6 +14052,9 @@ def main():
     application.add_handler(
         CommandHandler("fight", fight)
     )
+    application.add_handler(
+        CommandHandler("leave", leave_fight)
+    )
     application.add_handler(CommandHandler("pokedex", pokedex))
     application.add_handler(CommandHandler("pokeshop", pokeshop))
     application.add_handler(CommandHandler("buypoke", buypoke))
@@ -9943,6 +14076,7 @@ def main():
     application.add_handler(CommandHandler("ppvpaccept", ppvpaccept))
     application.add_handler(CommandHandler("ppvpattack", ppvpattack)
     )
+
     application.add_handler(CallbackQueryHandler(pokemon_menu_callback, pattern="^pokemon_menu$"), group=-1
     )
     application.add_handler(CommandHandler("poke", poke))
@@ -10035,6 +14169,24 @@ def main():
         )
     )
 
+    # Real money group-add tracking
+    application.add_handler(
+        ChatMemberHandler(
+            real_money_bot_added,
+            ChatMemberHandler.MY_CHAT_MEMBER,
+        )
+    )
+
+    # Payment support replies.
+    # Must run before the generic text handlers.
+    application.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            handle_payment_support_message,
+        ),
+        group=-1,
+    )
+
     # Admin broadcast input
     application.add_handler(
         MessageHandler(
@@ -10083,8 +14235,34 @@ def main():
     print("👋 Welcome system enabled")
 
     application.add_error_handler(global_error_handler)
-    application.run_polling()
 
+    application.add_handler(
+        CallbackQueryHandler(
+            pfp_shop_callback,
+            pattern=r"^pfpshop:",
+        ),
+        group=-3,
+    )
+
+    application.add_handler(
+        CallbackQueryHandler(
+            rich_leaderboard_callback,
+            pattern=r"^rich_leaderboard$",
+        ),
+        group=-4,
+    )
+
+    application.add_handler(
+        CallbackQueryHandler(
+            back_xp_leaderboard_callback,
+            pattern=r"^back_xp_leaderboard$",
+        ),
+        group=-4,
+    )
+
+    print("🔴 ABOUT TO START POLLING", flush=True)
+    application.run_polling()
+    print("🔴 RUN_POLLING RETURNED", flush=True)
 
 if __name__ == "__main__":
     main()

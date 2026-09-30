@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body style="background:#111;color:white;font-family:Arial;padding:20px">
+<h2>Hrishu Telegram Test</h2>
+<div id="x">Loading...</div>
+
+<script>
+try {
+    const tg = window.Telegram && window.Telegram.WebApp;
+
+    if (!tg) {
+        document.getElementById('x').innerText =
+            'ERROR: Telegram WebApp object missing';
+    } else {
+        tg.ready();
+        document.getElementById('x').innerText =
+            'Telegram WebApp OK\\nVersion: ' + tg.version +
+            '\\nPlatform: ' + tg.platform +
+            '\\nInitData length: ' + tg.initData.length;
+    }
+} catch(e) {
+    document.getElementById('x').innerText =
+        'ERROR: ' + e.name + '\\n' + e.message;
+}
+</script>
+</body>
+</html>

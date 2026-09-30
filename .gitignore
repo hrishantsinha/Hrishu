@@ -10,3 +10,15 @@ bot.py.*
 bot_backup.py
 bot_before_*.py
 database_*.py
+
+# Runtime / database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Local installers / generated files
+*.deb
+
+# Database backups / generated cache
+*.before_*
+pfp_cache/
