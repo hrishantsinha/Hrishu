@@ -1229,7 +1229,8 @@ ROB_COOLDOWN = 0
 
 SWORD_DURABILITY = 12
 SWORD_UPGRADE_BONUS = 0.30
-SWORD_UPGRADE_PRICE = 3000
+import treasury as TR
+SWORD_UPGRADE_PRICE = 3300
 SWORD_REPRICE_FACTOR = 1.20
 
 SHIELD_DURABILITY = 4
@@ -2236,7 +2237,11 @@ async def resolve_battle_end(context, chat_id, winner_id, loser_id, battle):
     winner = get_user(winner_id)
     loser = get_user(loser_id)
 
-    win_coins = BATTLE_WIN_BASE_COINS + int(battle.get("pool", 0) * BATTLE_WIN_FEE_SHARE)
+    import treasury as tr
+    pool_total = int(battle.get("pool", 0))
+    pool_share = int(pool_total * BATTLE_WIN_FEE_SHARE)
+    tr.deposit(max(0, pool_total - pool_share))
+    win_coins = tr.payout(BATTLE_WIN_BASE_COINS) + pool_share
     xp_gain = int(loser["xp"] * BATTLE_WIN_XP_PCT)
 
     update_user(
@@ -2697,7 +2702,7 @@ async def upgrade_sword(
 
     update_user(
         user["user_id"],
-        coins=user["coins"] - SWORD_UPGRADE_PRICE,
+        coins=user["coins"] - TR.spend(SWORD_UPGRADE_PRICE),
         sword_upgrade=1,
     )
 
@@ -5138,7 +5143,12 @@ def power_multiplier(level, upgrades, maximum):
     return min(multiplier, maximum)
 
 
-def power_upgrade_cost(level, upgrades):
+def power_upgrade_cost(*a, **k):
+    _c, _x = _power_upgrade_cost_base(*a, **k)
+    return int(_c * 1.1), _x
+
+
+def _power_upgrade_cost_base(level, upgrades):
     # Starts at 400 coins + 100 XP.
     # Gets harder as the player progresses.
     progress = ((level - 1) * 10) + upgrades
@@ -5457,7 +5467,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Pay upgrade cost.
         update_user(
             user["user_id"],
-            coins=user["coins"] - coins_needed,
+            coins=user["coins"] - TR.spend(coins_needed),
             xp=user["xp"] - xp_needed,
         )
 
@@ -7203,9 +7213,12 @@ async def daily(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    import treasury as tr
+    _reward = tr.payout(DAILY_REWARD)
+
     update_user(
         user["user_id"],
-        coins=user["coins"] + DAILY_REWARD,
+        coins=user["coins"] + _reward,
         last_daily=int(time.time()),
     )
 
@@ -7216,7 +7229,7 @@ async def daily(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         f"🎁 Daily reward!\n\n"
-        f"💰 +{DAILY_REWARD} coins\n"
+        f"💰 +{_reward} coins\n"
         f"{xp_message(result)}"
     )
 
@@ -7810,10 +7823,11 @@ async def work_game_message(
 
     user = await ensure_user(update)
 
-    reward = random.randint(
+    import treasury as tr
+    reward = tr.payout(random.randint(
         WORK_REWARD_MIN,
         WORK_REWARD_MAX,
-    )
+    ))
 
     update_user(
         user["user_id"],
@@ -8062,45 +8076,39 @@ async def coinflip(
     user = await ensure_user(update)
 
     if not context.args:
-        await update.message.reply_text(
-            "Usage: /coinflip heads 100"
-        )
+        await update.message.reply_text("Usage: /coinflip heads 100")
         return
 
     choice = context.args[0].lower()
 
     if choice not in ("heads", "tails"):
-        await update.message.reply_text(
-            "Choose heads or tails."
-        )
+        await update.message.reply_text("Choose heads or tails.")
         return
 
     try:
         amount = int(context.args[1])
     except (IndexError, ValueError):
-        await update.message.reply_text(
-            "Usage: /coinflip heads 100"
-        )
+        await update.message.reply_text("Usage: /coinflip heads 100")
         return
 
     if amount <= 0:
-        await update.message.reply_text(
-            "Amount must be greater than 0."
-        )
+        await update.message.reply_text("Amount must be greater than 0.")
         return
 
     if user["coins"] < amount:
-        await update.message.reply_text(
-            "💸 You don't have enough coins."
-        )
+        await update.message.reply_text("💸 You don't have enough coins.")
         return
+
+    import treasury
 
     result = random.choice(("heads", "tails"))
 
     if choice == result:
+        paid = treasury.payout(amount)
+
         update_user(
             user["user_id"],
-            coins=user["coins"] + amount,
+            coins=user["coins"] - amount + paid,
         )
 
         xp = add_player_xp(
@@ -8110,19 +8118,22 @@ async def coinflip(
 
         await update.message.reply_text(
             f"🪙 Result: {result}\n\n"
-            f"🎉 You won {amount} coins!\n"
+            f"🎉 You won {amount:,} coins!\n"
+            f"🏦 Paid by the treasury: {paid:,} coins.\n"
             f"{xp_message(xp)}"
         )
-
     else:
         update_user(
             user["user_id"],
             coins=user["coins"] - amount,
         )
 
+        treasury.deposit(amount)
+
         await update.message.reply_text(
             f"🪙 Result: {result}\n\n"
-            f"💀 You lost {amount} coins."
+            f"💀 You lost {amount:,} coins.\n"
+            f"🏦 {amount:,} coins went to the treasury."
         )
 
 
@@ -8340,14 +8351,19 @@ async def give(
         coins=sender["coins"] - amount,
     )
 
+    import treasury as tr
+    _tax = amount * 3 // 100
+    tr.deposit(_tax)
+
     update_user(
         target["user_id"],
-        coins=target["coins"] + amount,
+        coins=target["coins"] + amount - _tax,
     )
 
     await update.message.reply_text(
         f"💸 {mention(sender)} gave {amount} coins " + nl
-        + f"to {mention(target)}."
+        + f"to {mention(target)}." + nl
+        + f"🏛 Tax: {_tax} coins (3%) went to the treasury."
     )
 
 
@@ -8534,7 +8550,7 @@ async def revive(
         )
         return
 
-    cost = 200
+    cost = 220
 
     if user["coins"] < cost:
         await update.message.reply_text(
@@ -8544,7 +8560,7 @@ async def revive(
 
     update_user(
         user["user_id"],
-        coins=user["coins"] - cost,
+        coins=user["coins"] - TR.spend(cost),
         hp=user["max_hp"],
     )
 
@@ -9574,15 +9590,15 @@ async def rob(
 
 SHOP = {
     "sword": {
-        "price": 2500,
+        "price": 2750,
         "name": "⚔️ Sword",
     },
     "shield": {
-        "price": 2000,
+        "price": 2200,
         "name": "🛡️ Shield",
     },
     "potion": {
-        "price": 500,
+        "price": 550,
         "name": "🧪 Potion",
     },
 }
@@ -9649,7 +9665,7 @@ async def buy(
 
         update_user(
             user["user_id"],
-            coins=user["coins"] - price,
+            coins=user["coins"] - TR.spend(price),
             sword_durability=SWORD_DURABILITY,
             sword_upgrade=0,
             swords_bought=user["swords_bought"] + 1,
@@ -9678,7 +9694,7 @@ async def buy(
 
         update_user(
             user["user_id"],
-            coins=user["coins"] - price,
+            coins=user["coins"] - TR.spend(price),
             shield_durability=SHIELD_DURABILITY,
             shields_bought=user["shields_bought"] + 1,
         )
@@ -9709,7 +9725,7 @@ async def buy(
 
     update_user(
         user["user_id"],
-        coins=user["coins"] - data["price"],
+        coins=user["coins"] - TR.spend(data["price"]),
         inventory=new_inventory,
     )
 
@@ -12742,6 +12758,8 @@ async def pfp_shop_callback(update, context):
 
                 conn.commit()
 
+                __import__("treasury").deposit(price)
+
                 await query.answer(
                     "✅ PFP purchased!",
                     show_alert=True,
@@ -13243,6 +13261,8 @@ async def pfp_shop_callback(update, context):
             ))
 
             conn.commit()
+
+            __import__("treasury").deposit(price)
 
             await query.answer(
                 "✅ PFP purchased!",
@@ -14261,6 +14281,10 @@ def main():
     )
 
     print("🔴 ABOUT TO START POLLING", flush=True)
+    import baka
+    baka.register(application)
+    import treasury
+    treasury.register(application)
     application.run_polling()
     print("🔴 RUN_POLLING RETURNED", flush=True)
 

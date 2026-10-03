@@ -2,7 +2,7 @@ import api
 import json
 import urllib.request
 
-URL = "https://colleagues-invited-concentrate-thermal.trycloudflare.com"
+URL = "https://accurately-configuration-airline-limits.trycloudflare.com"
 
 data = {
     "menu_button": {

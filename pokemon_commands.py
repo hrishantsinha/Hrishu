@@ -3,7 +3,7 @@ import database
 from telegram import Update
 from telegram.ext import ContextTypes, ApplicationHandlerStop
 
-BALL_PRICES = {"pokeball": 150, "greatball": 500, "masterball": 5000}
+BALL_PRICES = {"pokeball": 165, "greatball": 550, "masterball": 5500}
 BALL_NAMES = {"pokeball": "Poke Ball", "greatball": "Great Ball", "masterball": "Master Ball"}
 
 def hpbar(cur, mx, length=10):
@@ -72,6 +72,8 @@ async def buyball(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Not enough coins. Need 💰{cost}.")
         return
     database.add_coins(user_id, -cost)
+    import treasury
+    treasury.deposit(cost)
     database.add_balls(user_id, ball, qty)
     await update.message.reply_text(f"✅ Bought {qty}x {BALL_NAMES[ball]} for 💰{cost}.")
 
@@ -217,7 +219,7 @@ async def pbattle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def pheal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    cost = 300
+    cost = 330
     team = database.get_team(user_id)
     if not team:
         await update.message.reply_text("You have no Pokemon in your team to heal.")
@@ -235,6 +237,8 @@ async def pheal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Healing costs 💰{cost}. Not enough coins.")
         return
     database.add_coins(user_id, -cost)
+    import treasury
+    treasury.deposit(cost)
     healed = database.heal_team(user_id)
     await update.message.reply_text(f"🏥 Healed {healed} Pokemon to full HP for 💰{cost}.")
 

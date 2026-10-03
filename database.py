@@ -820,7 +820,8 @@ def transfer_bank_coins(
             return False, "insufficient_balance"
 
         sender_balance = sender["bank"] - amount
-        recipient_balance = recipient["bank"] + amount
+        tax = amount * 3 // 100
+        recipient_balance = recipient["bank"] + amount - tax
 
         cur.execute(
             """
@@ -882,7 +883,7 @@ def transfer_bank_coins(
             (
                 recipient_user_id,
                 "received",
-                amount,
+                amount - tax,
                 recipient_balance,
                 sender_user_id,
                 description,
@@ -891,6 +892,12 @@ def transfer_bank_coins(
         )
 
         conn.commit()
+        if tax:
+            try:
+                import treasury
+                treasury.deposit(tax)
+            except Exception:
+                pass
         return True, "success"
 
     except Exception:
@@ -1194,6 +1201,11 @@ def buy_pokemon(user_id, species_id):
     if get_coins(user_id) < price:
         return species_row, "no_coins"
     add_coins(user_id, -price)
+    try:
+        import treasury
+        treasury.deposit(price)
+    except Exception:
+        pass
     stats = calc_stats(species_row, 5)
     conn = get_connection(); cur = conn.cursor()
     cur.execute("""INSERT INTO user_pokemon (owner_id,species_id,level,xp,current_hp,in_team,team_slot,caught_at)

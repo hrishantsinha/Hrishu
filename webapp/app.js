@@ -1,4 +1,8 @@
-const tg=window.Telegram.WebApp;tg.ready();tg.expand();
+const tg=window.Telegram.WebApp;
+tg.ready();
+tg.expand();
+console.log("TG INIT DATA:", tg.initData);
+console.log("TG USER:", JSON.stringify(tg.initDataUnsafe?.user || null));
 try{tg.setHeaderColor('#0b0820');tg.setBackgroundColor('#0b0820')}catch(e){}
 const hap=()=>{try{tg.HapticFeedback.impactOccurred('light')}catch(e){}};
 const $=id=>document.getElementById(id);
